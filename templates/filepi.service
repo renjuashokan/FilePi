@@ -1,0 +1,18 @@
+# /etc/systemd/system/filepi.service
+[Unit]
+Description=FilePi Server
+After=network.target
+
+[Service]
+WorkingDirectory=/home/renju/workspace/FilePi/FilePy/
+ExecStart=/bin/bash /home/renju/workspace/FilePi/FilePy/templates/start.sh
+Restart=always
+# Restart service after 10 seconds
+RestartSec=10
+KillSignal=SIGINT
+SyslogIdentifier=filepi
+StandardOutput=append:/var/log/filepi.log
+StandardError=append:/var/log/filepi_error.log
+
+[Install]
+WantedBy=multi-user.target
