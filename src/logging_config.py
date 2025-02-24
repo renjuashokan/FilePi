@@ -9,7 +9,10 @@ LOGGING_CONFIG = {
         },
         "access": {
             "()": "uvicorn.logging.AccessFormatter",
-            "fmt": "%(levelprefix)s %(asctime)s [%(name)s:%(lineno)d] %(client_addr)s - '%(request_line)s' %(status_code)s",
+            "fmt": (
+                "%(levelprefix)s %(asctime)s [%(name)s:%(lineno)d] "
+                "%(client_addr)s - '%(request_line)s' %(status_code)s"
+            ),
         },
     },
     "handlers": {

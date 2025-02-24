@@ -33,9 +33,7 @@ async def list_videos(
     path: str = "",
     skip: int = 0,
     limit: int = 25,
-    recursive: Optional[bool] = Query(
-        True, description="Recursively list videos in subdirectories"
-    ),
+    recursive: Optional[bool] = Query(True, description="Recursively list videos in subdirectories"),
     sort_by: Optional[str] = Query(
         None,
         description="Field to sort by: name, modified_time, created_time, file_type, size",
@@ -60,9 +58,7 @@ async def search_files(
     order: Optional[str] = Query("asc", description="Sort order ('asc' or 'desc')"),
 ):
     try:
-        return file_ops.search(
-            query=query, path=path, skip=skip, limit=limit, sort_by=sort_by, order=order
-        )
+        return file_ops.search(query=query, path=path, skip=skip, limit=limit, sort_by=sort_by, order=order)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

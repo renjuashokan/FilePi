@@ -57,11 +57,7 @@ class FileOperations:
         try:
             for entry in os.scandir(abs_path):
                 stats = entry.stat()
-                file_type = (
-                    "inode/directory"
-                    if entry.is_dir()
-                    else mimetypes.guess_type(entry.name)[0]
-                )
+                file_type = "inode/directory" if entry.is_dir() else mimetypes.guess_type(entry.name)[0]
 
                 file_info = FileInfo(
                     name=entry.name,
@@ -131,9 +127,7 @@ class FileOperations:
         if not mime_type or not mime_type.startswith("video/"):
             raise ValueError("Not a video file")
 
-        return FileResponse(
-            path=abs_path, media_type=mime_type, filename=os.path.basename(abs_path)
-        )
+        return FileResponse(path=abs_path, media_type=mime_type, filename=os.path.basename(abs_path))
 
     def get_thumbnail(self, path: str) -> FileResponse:
         """
@@ -222,9 +216,7 @@ class FileOperations:
             logger.error(f"Error creating folder: {str(e)}")
             raise Exception(f"Unable to create folder: {str(e)}")
 
-    async def save_uploaded_file(
-        self, file: UploadFile, location: str, user: str
-    ) -> str:
+    async def save_uploaded_file(self, file: UploadFile, location: str, user: str) -> str:
         """
         Save an uploaded file to the specified location
         """
