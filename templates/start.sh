@@ -1,21 +1,21 @@
 #!/bin/bash
 set -ex
 
-export FILE_PI_ROOT_DIR="/media/renju/Seagate Backup Plus Drive"
+# Install the prerequisite
+sudo apt install python3-venv
 
-# Get current directory
-DIR="$(realpath "${0%/*}")"
+# Create a virtual environment
+python3 -m venv ~/filepi_env
 
-# Get Parent dir
-PARENTDIR="$(dirname "$DIR")"
-cd $PARENTDIR
-# Create virtual environment
-python3 -m venv venv
+# Activate the virtual environment
+source ~/filepi_env/bin/activate
 
-# Activate virtual environment
-source venv/bin/activate
-pip install -r requirements.txt
+# Now install your package
+pip install filepi-*.whl
 
+# You can run your package from the virtual environment
+filepi
 
-python3 -m src.main
+# Enable as service
 
+sudo filepi-install-service --data-dir /path/to/data

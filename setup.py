@@ -138,6 +138,7 @@ setup(
     entry_points={
         "console_scripts": [
             "filepi=src.main:run_server",
+            "filepi-install-service=src.service:install_service",
         ],
     },
 )
