@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 
+
 def install_service():
     """
     Install the filepi service on the system with a custom data directory.
@@ -49,7 +50,7 @@ def install_service():
         if not os.path.isfile(filepi_path) or not os.access(filepi_path, os.X_OK):
             print(f"Error: The specified filepi path '{filepi_path}' is not a valid executable")
             sys.exit(1)
-        
+
         # Ensure it's an absolute path
         filepi_path = os.path.abspath(filepi_path)
 

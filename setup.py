@@ -1,8 +1,28 @@
+import os
+import sys
+
 from setuptools import find_packages, setup
+
+version = os.environ.get("PACKAGE_VERSION")
+
+# Check if version is passed as an argument
+for i, arg in enumerate(sys.argv):
+    if arg == "--package-version" and i + 1 < len(sys.argv):
+        version = sys.argv[i + 1]
+        # Remove these arguments so setuptools doesn't see them
+        sys.argv.pop(i)
+        sys.argv.pop(i)
+        break
+
+if not version:
+    print("Error: Version is required. Please set PACKAGE_VERSION environment variable or use --package-version")
+    sys.exit(1)
+
+print(f"Building filepi version {version}")
 
 setup(
     name="filepi",
-    version="0.1.0",
+    version=version,
     packages=find_packages(),
     include_package_data=True,
     install_requires=[
