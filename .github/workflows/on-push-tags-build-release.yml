@@ -1,0 +1,67 @@
+name: Release on Tag Push
+
+on:
+  push:
+    tags:
+      - 'filepi_*' 
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build wheel twine setuptools
+          pip install -r requirements.txt
+      
+      - name: Extract version from tag
+        id: extract_version
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          # Extract version from tag (assuming format filepi_X.Y.Z)
+          VERSION=$(echo $TAG | sed -E 's/filepi_([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
+          echo "Extracted version: $VERSION from tag: $TAG"
+          
+          # Verify the version matches expected format
+          if [[ ! $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: Version doesn't match expected format X.Y.Z"
+            exit 1
+          fi
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      
+      - name: Check the code
+        run: |
+          scripts/format.sh
+      
+      - name: Build the package
+        run: |
+          python setup.py --package-version ${{ steps.extract_version.outputs.version }} sdist bdist_wheel
+      
+      - name: Publish the artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: filepi-${{ steps.extract_version.outputs.version }}
+          path: dist/
+      
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: FilePi ${{ steps.extract_version.outputs.version }}
+          draft: false
+          prerelease: false
+          files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      

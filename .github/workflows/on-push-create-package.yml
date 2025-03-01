@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # This ensures git describe works correctly
       
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -24,12 +26,39 @@ jobs:
           pip install build wheel twine setuptools
           pip install -r requirements.txt
       
+      - name: Check the code
+        run: |
+          scripts/format.sh
+      
+      - name: Set artifact name and development version
+        id: set-artifact-props
+        run: |
+          # Get branch name
+          if [ "$GITHUB_EVENT_NAME" == "pull_request" ]; then
+            BRANCH_NAME="${GITHUB_HEAD_REF}"
+          else
+            BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+          fi
+          
+          # Clean branch name for artifact naming
+          CLEAN_NAME="$(echo "$BRANCH_NAME" | sed -E 's/^(b|feat\/|try\/)//g' | sed -e 's/ /_/g' | sed -e 's/\//_/g')"
+          echo "Clean branch name is: $CLEAN_NAME"
+
+          RUN_NUMBER=${{ github.run_number }}
+          VERSION="${CLEAN_NAME}_${RUN_NUMBER}"
+          
+          echo "build-name=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          
+          echo "Using artifact name: filepi-${VERSION}"
+          echo "Using version: $VERSION"
+
       - name: Build the package
         run: |
-          python setup.py sdist bdist_wheel
+          python setup.py --package-version ${{ steps.set-artifact-props.outputs.version }} sdist bdist_wheel
       
       - name: Publish the artifact
         uses: actions/upload-artifact@v4
         with:
-          name: filepi-packages
+          name: filepi-${{ steps.set-artifact-props.outputs.build-name }}
           path: dist/
