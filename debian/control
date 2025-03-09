@@ -1,0 +1,22 @@
+Source: filepi
+Section: net
+Priority: optional
+Maintainer: Renju Ashokan <renjuashokan@gmail.com>
+Build-Depends: debhelper-compat (= 12)
+Standards-Version: 4.5.0
+Homepage: https://github.com/renjuashokan/filepi
+
+Package: filepi
+Version: 1.0.0+1
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ffmpeg
+Description: Lightweight network file browser
+ FilePi is a lightweight network file browser designed 
+ primarily for Raspberry Pi and other resource-constrained 
+ devices. It allows you to browse, stream, and manage files 
+ on your device from any web browser or through the 
+ dedicated Pi View mobile app.
+ .
+ Features include file browsing with sorting and pagination, 
+ video streaming with thumbnails, file search functionality, 
+ and file upload capabilities.

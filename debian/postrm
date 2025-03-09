@@ -1,0 +1,23 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    purge)
+        # Remove the data directory
+        rm -rf /var/lib/filepi
+    ;;
+    
+    remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        # Stop the service if it's running
+        systemctl stop filepi.service || true
+        systemctl disable filepi.service || true
+        systemctl daemon-reload
+    ;;
+
+    *)
+        echo "postrm called with unknown argument \`$1'" >&2
+        exit 1
+    ;;
+esac
+
+exit 0

@@ -1,0 +1,13 @@
+#!/usr/bin/make -f
+%:
+	dh $@
+
+override_dh_auto_build:
+	# The binary will be provided externally, so no build step here
+
+override_dh_auto_install:
+	mkdir -p debian/filepi/opt/filepi
+	mkdir -p debian/filepi/lib/systemd/system
+	mkdir -p debian/filepi/var/lib/filepi/media
+	cp filepi debian/filepi/opt/filepi/
+	cp filepi.service debian/filepi/lib/systemd/system/
