@@ -128,8 +128,8 @@ func (fs *FileServer) GetFiles(path string, skip, limit int, sortBy, order strin
 	}, nil
 }
 
-func (fo *FileServer) GetVideos(path string, skip, limit int, recursive bool, sortBy, order string) (*FilePiResonse, error) {
-	absPath, err := fo.getAbsolutePath(path)
+func (fs *FileServer) GetVideos(path string, skip, limit int, recursive bool, sortBy, order string) (*FilePiResonse, error) {
+	absPath, err := fs.getAbsolutePath(path)
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +153,7 @@ func (fo *FileServer) GetVideos(path string, skip, limit int, recursive bool, so
 					CreatedTime:  info.ModTime().UnixMilli(),
 					ModifiedTime: info.ModTime().UnixMilli(),
 					FileType:     mimeType,
-					Owner:        fo.getFileOwner(info),
+					Owner:        fs.getFileOwner(info),
 					FullName:     relPath,
 				})
 			}
@@ -163,7 +163,7 @@ func (fo *FileServer) GetVideos(path string, skip, limit int, recursive bool, so
 	if err != nil {
 		return nil, fmt.Errorf("error reading directory: %w", err)
 	}
-	if sortBy != "" && !contains(fo.ValidSortFields, sortBy) {
+	if sortBy != "" && !contains(fs.ValidSortFields, sortBy) {
 		return nil, fmt.Errorf("invalid sort field: %s", sortBy)
 	}
 	if sortBy != "" {
@@ -213,8 +213,8 @@ func (fo *FileServer) GetVideos(path string, skip, limit int, recursive bool, so
 	}, nil
 }
 
-func (fo *FileServer) Search(query, path string, skip, limit int, sortBy, order string) (*FilePiResonse, error) {
-	absPath, err := fo.getAbsolutePath(path)
+func (fs *FileServer) Search(query, path string, skip, limit int, sortBy, order string) (*FilePiResonse, error) {
+	absPath, err := fs.getAbsolutePath(path)
 	if err != nil {
 		return nil, err
 	}
@@ -231,8 +231,8 @@ func (fo *FileServer) Search(query, path string, skip, limit int, sortBy, order 
 				CreatedTime:  info.ModTime().UnixMilli(),
 				ModifiedTime: info.ModTime().UnixMilli(),
 				FileType:     mime.TypeByExtension(filepath.Ext(info.Name())),
-				Owner:        fo.getFileOwner(info),
-				FullName:     strings.TrimPrefix(path, fo.RootDir),
+				Owner:        fs.getFileOwner(info),
+				FullName:     strings.TrimPrefix(path, fs.RootDir),
 			})
 		}
 		return nil
@@ -240,7 +240,7 @@ func (fo *FileServer) Search(query, path string, skip, limit int, sortBy, order 
 	if err != nil {
 		return nil, fmt.Errorf("error reading directory: %w", err)
 	}
-	if sortBy != "" && !contains(fo.ValidSortFields, sortBy) {
+	if sortBy != "" && !contains(fs.ValidSortFields, sortBy) {
 		return nil, fmt.Errorf("invalid sort field: %s", sortBy)
 	}
 	if sortBy != "" {
@@ -290,8 +290,8 @@ func (fo *FileServer) Search(query, path string, skip, limit int, sortBy, order 
 	}, nil
 }
 
-func (fo *FileServer) ServeFile(path string) (string, error) {
-	absPath, err := fo.getAbsolutePath(path)
+func (fs *FileServer) ServeFile(path string) (string, error) {
+	absPath, err := fs.getAbsolutePath(path)
 	if err != nil {
 		return "", err
 	}
@@ -301,8 +301,8 @@ func (fo *FileServer) ServeFile(path string) (string, error) {
 	return absPath, nil
 }
 
-func (fo *FileServer) StreamFile(path string) (string, error) {
-	absPath, err := fo.getAbsolutePath(path)
+func (fs *FileServer) StreamFile(path string) (string, error) {
+	absPath, err := fs.getAbsolutePath(path)
 	if err != nil {
 		return "", err
 	}
