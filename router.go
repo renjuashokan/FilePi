@@ -3,24 +3,50 @@ package main
 import (
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/logger"
-	"github.com/gofiber/fiber/v2/middleware/requestid"
 	log "github.com/sirupsen/logrus"
 )
+
+func RequestLogger() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// Record the start time
+		start := time.Now()
+
+		// Process the request
+		err := c.Next()
+
+		// Calculate the latency
+		latency := time.Since(start)
+
+		// Log the request details using Logrus
+		log.WithFields(log.Fields{
+			"status":       c.Response().StatusCode(),
+			"method":       c.Method(),
+			"path":         c.Path(),
+			"latency":      latency.String(),
+			"ip":           c.IP(),
+			"query_params": c.Request().URI().QueryArgs().String(),
+		}).Info("HTTP request")
+
+		return err
+	}
+}
 
 func setupRoutes(fs *FileServer) {
 
 	app := fiber.New()
 	api := app.Group(API_PREFIX)
 
-	app.Use(requestid.New())
-	app.Use(logger.New(logger.Config{
-		Format:     "${time} ${pid} ${locals:requestid} ${status} - ${method} ${path} ${queryParams}\n",
-		TimeFormat: "2006/01/02 15:04:05.000000",
-		TimeZone:   "Local",
-	}))
+	//app.Use(requestid.New())
+	// app.Use(logger.New(logger.Config{
+	// 	Format:     "${time} ${pid} ${locals:requestid} ${status} - ${method} ${path} ${queryParams}\n",
+	// 	TimeFormat: "2006/01/02 15:04:05.000000",
+	// 	TimeZone:   "Local",
+	// }))
+
+	app.Use(RequestLogger())
 
 	api.Get("/files", func(c *fiber.Ctx) error {
 		path := c.Query("path", "")
