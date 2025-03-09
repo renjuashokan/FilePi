@@ -1,0 +1,80 @@
+name: Build Go Server
+
+on:
+  push:
+    branches: 
+        - main_go
+        - try/*
+  pull_request:
+    branches:
+        - main_go
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24.1'
+        check-latest: true
+
+    - name: Set artifact name and development version
+      id: set-artifact-props
+      run: |
+        # Get branch name
+        if [ "$GITHUB_EVENT_NAME" == "pull_request" ]; then
+          BRANCH_NAME="${GITHUB_HEAD_REF}"
+        else
+          BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+        fi
+        
+        # Clean branch name for artifact naming
+        CLEAN_NAME="$(echo "$BRANCH_NAME" | sed -E 's/^(b|feat\/|try\/)//g' | sed -e 's/ /_/g' | sed -e 's/\//_/g')"
+        echo "Clean branch name is: $CLEAN_NAME"
+
+        RUN_NUMBER=${{ github.run_number }}
+        VERSION="${CLEAN_NAME}_${RUN_NUMBER}"
+        
+        echo "build-name=$VERSION" >> $GITHUB_OUTPUT
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        
+        echo "Using artifact name: filepi-${VERSION}"
+        echo "Using version: $VERSION"
+
+    - name: Get dependencies
+      run: go mod download
+
+    - name: Build for Linux ARM64 (M1 Mac/RPi 64-bit)
+      run: |
+        GOOS=linux GOARCH=arm64 go build -ldflags="-X main.Version=${{ steps.set-artifact-props.outputs.version }}" -o filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-arm64
+        tar -czvf filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-arm64.tar.gz filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-arm64
+
+    - name: Build for Linux x86_64
+      run: |
+        GOOS=linux GOARCH=amd64 go build -ldflags="-X main.Version=${{ steps.set-artifact-props.outputs.version }}" -o filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-amd64
+        tar -czvf filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-amd64.tar.gz filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-amd64
+
+    - name: Upload Linux ARM64 build
+      uses: actions/upload-artifact@v4
+      with:
+        name: filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-arm64
+        path: filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-arm64.tar.gz
+        retention-days: 14
+
+    - name: Upload Linux x86_64 build
+      uses: actions/upload-artifact@v4
+      with:
+        name: filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-amd64
+        path: filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-amd64.tar.gz
+        retention-days: 14
+
+    - name: List artifacts
+      run: |
+        echo "The following artifacts have been created:"
+        echo "- filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-arm64.tar.gz (for Raspberry Pi 64-bit and M1 Mac Linux VMs)"
+        echo "- filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-amd64.tar.gz (for x86_64 Linux)"
