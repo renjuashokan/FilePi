@@ -25,3 +25,6 @@ go.work.sum
 .env
 
 FilePi
+filepi
+filepi_*
+outputs/
