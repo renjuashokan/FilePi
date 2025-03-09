@@ -8,10 +8,21 @@ on:
   pull_request:
     branches:
         - main_go
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            goarch: amd64
+            goos: linux
+          - arch: arm64
+            goarch: arm64
+            goos: linux
     
     steps:
     - name: Checkout code
@@ -40,41 +51,70 @@ jobs:
         RUN_NUMBER=${{ github.run_number }}
         VERSION="${CLEAN_NAME}_${RUN_NUMBER}"
         
+        # Create a Debian-compatible version (must start with a digit)
+        DEB_VERSION="1.0.0+${CLEAN_NAME}.${RUN_NUMBER}"
+        
         echo "build-name=$VERSION" >> $GITHUB_OUTPUT
         echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "deb-version=$DEB_VERSION" >> $GITHUB_OUTPUT
         
         echo "Using artifact name: filepi-${VERSION}"
         echo "Using version: $VERSION"
+        echo "Using Debian version: $DEB_VERSION"
 
     - name: Get dependencies
       run: go mod download
 
-    - name: Build for Linux ARM64 (M1 Mac/RPi 64-bit)
+    - name: Install build dependencies
       run: |
-        GOOS=linux GOARCH=arm64 go build -ldflags="-X main.Version=${{ steps.set-artifact-props.outputs.version }}" -o filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-arm64
-        tar -czvf filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-arm64.tar.gz filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-arm64
+        sudo apt-get update
+        sudo apt-get install -y build-essential
 
-    - name: Build for Linux x86_64
+    - name: Build Go binary
       run: |
-        GOOS=linux GOARCH=amd64 go build -ldflags="-X main.Version=${{ steps.set-artifact-props.outputs.version }}" -o filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-amd64
-        tar -czvf filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-amd64.tar.gz filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-amd64
+        GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="-X main.Version=${{ steps.set-artifact-props.outputs.version }}" -o filepi
+        
+        # Create tarball
+        BINARY_NAME="filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-${{ matrix.arch }}"
+        cp filepi ${BINARY_NAME}
+        tar -czvf ${BINARY_NAME}.tar.gz ${BINARY_NAME}
 
-    - name: Upload Linux ARM64 build
+    - name: Build Debian package
+      run: |
+        chmod +x build-deb.sh
+        ./build-deb.sh "${{ steps.set-artifact-props.outputs.deb-version }}"
+        
+        # Rename the deb file to include architecture
+        mv outputs/filepi_*.deb filepi_${{ steps.set-artifact-props.outputs.build-name }}_${{ matrix.arch }}.deb
+
+    - name: Upload binary tarball
       uses: actions/upload-artifact@v4
       with:
-        name: filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-arm64
-        path: filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-arm64.tar.gz
+        name: filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-${{ matrix.arch }}
+        path: filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-${{ matrix.arch }}.tar.gz
         retention-days: 14
 
-    - name: Upload Linux x86_64 build
+    - name: Upload Debian package
       uses: actions/upload-artifact@v4
       with:
-        name: filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-amd64
-        path: filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-amd64.tar.gz
+        name: filepi_${{ steps.set-artifact-props.outputs.build-name }}_${{ matrix.arch }}
+        path: filepi_${{ steps.set-artifact-props.outputs.build-name }}_${{ matrix.arch }}.deb
         retention-days: 14
+
+  summary:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: all-artifacts
+        merge-multiple: true
 
     - name: List artifacts
       run: |
         echo "The following artifacts have been created:"
-        echo "- filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-arm64.tar.gz (for Raspberry Pi 64-bit and M1 Mac Linux VMs)"
-        echo "- filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-amd64.tar.gz (for x86_64 Linux)"
+        echo "Go binaries:"
+        ls -l all-artifacts/*.tar.gz
+        echo "Debian packages:"
+        ls -l all-artifacts/*.deb

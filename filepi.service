@@ -1,0 +1,18 @@
+[Unit]
+Description=FilePi - Lightweight Network File Browser
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/filepi
+ExecStart=/opt/filepi/filepi
+Restart=on-failure
+RestartSec=5
+Environment=FILE_PI_ROOT_DIR=/var/lib/filepi/media
+Environment=FILE_PI_LOGLEVEL=INFO
+StandardOutput=append:/var/log/filepi.log
+StandardError=append:/var/log/filepi_error.log
+
+[Install]
+WantedBy=multi-user.target

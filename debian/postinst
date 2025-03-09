@@ -1,0 +1,29 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        # Set permissions
+        chmod 755 /opt/filepi/filepi
+        
+        # Create the cache directory
+        mkdir -p /var/lib/filepi/media/.cache
+        
+        # Reload systemd to recognize the new service
+        systemctl daemon-reload
+        
+        # Enable and start the service
+        systemctl enable filepi.service
+        systemctl start filepi.service || true
+    ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+    ;;
+
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+    ;;
+esac
+
+exit 0
