@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -36,17 +37,29 @@ func RequestLogger() fiber.Handler {
 
 func setupRoutes(fs *FileServer) {
 
-	app := fiber.New()
-	api := app.Group(API_PREFIX)
+	// Configure Fiber with appropriate settings for file uploads
+	app := fiber.New(fiber.Config{
+		// Increase the body limit to handle larger file uploads (100MB)
+		BodyLimit: 100 * 1024 * 1024,
+		// Increase read timeout
+		ReadTimeout: 60 * time.Second,
+		// Increase write timeout
+		WriteTimeout: 60 * time.Second,
+		// Enable streaming for multipart form
+		StreamRequestBody: true,
+	})
 
-	//app.Use(requestid.New())
-	// app.Use(logger.New(logger.Config{
-	// 	Format:     "${time} ${pid} ${locals:requestid} ${status} - ${method} ${path} ${queryParams}\n",
-	// 	TimeFormat: "2006/01/02 15:04:05.000000",
-	// 	TimeZone:   "Local",
-	// }))
+	// Add CORS middleware - BEFORE the route definitions
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "*",                   // Allow all origins
+		AllowMethods: "GET,POST,PUT,DELETE", // Allowed methods
+		AllowHeaders: "*",                   // Allow all headers
+	}))
 
+	// Add request logger middleware
 	app.Use(RequestLogger())
+
+	api := app.Group(API_PREFIX)
 
 	api.Get("/files", func(c *fiber.Ctx) error {
 		path := c.Query("path", "")
@@ -154,58 +167,66 @@ func setupRoutes(fs *FileServer) {
 		})
 	})
 
-	// Upload file
+	// Modified file upload handler
 	api.Post("/uploadfile", func(c *fiber.Ctx) error {
-		// Parse multipart form data
-		form, err := c.MultipartForm()
-		if err != nil {
+		// Log the beginning of file upload
+		log.Info("Starting file upload process")
+
+		// Get form values directly
+		location := c.FormValue("location")
+		user := c.FormValue("user")
+
+		log.Info("Upload parameters - location: ", location, ", user: ", user)
+
+		if location == "" || user == "" {
+			log.Warn("Missing required fields in upload request")
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "Failed to parse form data",
+				"error": "Missing required fields: location or user",
 			})
 		}
 
-		// Extract fields from the form
-		location := form.Value["location"]
-		user := form.Value["user"]
-		files, err := c.FormFile("file")
+		// Get the uploaded file
+		file, err := c.FormFile("file")
 		if err != nil {
+			log.Error("Failed to get form file: ", err)
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "Failed to get form file",
+				"error": "Failed to get file from request: " + err.Error(),
 			})
 		}
 
-		if len(location) == 0 || len(user) == 0 || files == nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "Missing required fields: location, user, or file",
-			})
-		}
+		log.Info("Received file: ", file.Filename, " - Size: ", file.Size)
 
 		// Open the uploaded file
-		file, err := files.Open()
+		fileContent, err := file.Open()
 		if err != nil {
+			log.Error("Failed to open uploaded file: ", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "Failed to open uploaded file",
+				"error": "Failed to open uploaded file: " + err.Error(),
 			})
 		}
-		defer file.Close()
+		defer fileContent.Close()
 
 		// Save the uploaded file
-		savedPath, err := fs.saveUploadedFile(file, location[0], files.Filename)
+		log.Info("Saving file to location: ", location)
+		savedPath, err := fs.saveUploadedFile(fileContent, location, file.Filename)
 		if err != nil {
+			log.Error("Failed to save uploaded file: ", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"error": err.Error(),
 			})
 		}
 
+		log.Info("File uploaded successfully: ", file.Filename, " to path: ", savedPath)
+
 		// Return success response
 		return c.JSON(fiber.Map{
 			"message":     "File uploaded successfully",
-			"filename":    files.Filename,
+			"filename":    file.Filename,
 			"location":    savedPath,
-			"uploaded_by": user[0],
+			"uploaded_by": user,
 		})
 	})
 
-	// Start the server
+	log.Info("Starting server on port 8080")
 	log.Fatal(app.Listen(":8080"))
 }

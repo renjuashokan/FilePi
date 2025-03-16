@@ -366,17 +366,21 @@ func (fs *FileServer) saveUploadedFile(file io.Reader, location, fileName string
 		return "", err
 	}
 	if err := os.MkdirAll(absPath, os.ModePerm); err != nil {
+		log.Error("Error creating directory: ", err)
 		return "", fmt.Errorf("failed to create directory: %w", err)
 	}
 	filePath := filepath.Join(absPath, fileName)
 	out, err := os.Create(filePath)
 	if err != nil {
+		log.Error("Error creating file: ", err)
 		return "", fmt.Errorf("failed to create file: %w", err)
 	}
 	defer out.Close()
 	if _, err := io.Copy(out, file); err != nil {
+		log.Error("Error saving file: ", err)
 		return "", fmt.Errorf("failed to save file: %w", err)
 	}
+	log.Info("File saved successfully: ", fileName)
 	return filePath, nil
 }
 
