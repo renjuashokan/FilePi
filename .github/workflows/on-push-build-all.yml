@@ -82,7 +82,7 @@ jobs:
     - name: Build Debian package
       run: |
         chmod +x build-deb.sh
-        ./build-deb.sh "${{ steps.set-artifact-props.outputs.deb-version }}"
+        ./build-deb.sh "${{ steps.set-artifact-props.outputs.deb-version }}" "${{ matrix.arch }}"
         
         # Rename the deb file to include architecture
         mv outputs/filepi_*.deb filepi_${{ steps.set-artifact-props.outputs.build-name }}_${{ matrix.arch }}.deb

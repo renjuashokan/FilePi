@@ -8,6 +8,12 @@ else
   PKG_VERSION="1.0.0"
 fi
 
+if [ "$2" != "" ]; then
+  PKG_ARCH="$2"
+else
+  PKG_ARCH=$(dpkg --print-architecture)
+fi
+
 # Replace underscores with hyphens
 PKG_VERSION=$(echo "$PKG_VERSION" | sed 's/_/-/g')
 
@@ -34,7 +40,6 @@ fi
 
 # Set package details
 PKG_NAME="filepi"
-PKG_ARCH=$(dpkg --print-architecture)
 PKG_DIR="${PKG_NAME}_${PKG_VERSION}_${PKG_ARCH}"
 
 echo "Creating package structure for ${PKG_DIR}..."
