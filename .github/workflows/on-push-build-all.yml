@@ -92,14 +92,12 @@ jobs:
       with:
         name: filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-${{ matrix.arch }}
         path: filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-${{ matrix.arch }}.tar.gz
-        retention-days: 14
 
     - name: Upload Debian package
       uses: actions/upload-artifact@v4
       with:
-        name: filepi_${{ steps.set-artifact-props.outputs.build-name }}_${{ matrix.arch }}
+        name: filepi_debian_${{ steps.set-artifact-props.outputs.build-name }}_${{ matrix.arch }}
         path: filepi_${{ steps.set-artifact-props.outputs.build-name }}_${{ matrix.arch }}.deb
-        retention-days: 14
 
   summary:
     needs: build
