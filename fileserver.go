@@ -14,7 +14,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/gofiber/fiber/v2/log"
+	log "github.com/sirupsen/logrus"
 )
 
 func NewFileServer(rootDir, tempDir string) *FileServer {
@@ -74,6 +74,8 @@ func (fs *FileServer) GetFiles(path string, skip, limit int, sortBy, order strin
 			FileType:     fileType,
 			Owner:        fs.getFileOwner(info),
 			FullName:     entry.Name(),
+			ParentDir:    path,                              // the requested path
+			RelPath:      filepath.Join(path, entry.Name()), // requested path + file name
 		})
 	}
 
@@ -120,6 +122,9 @@ func (fs *FileServer) GetFiles(path string, skip, limit int, sortBy, order strin
 	if limit > 0 && limit < len(paginatedFiles) {
 		paginatedFiles = paginatedFiles[:limit]
 	}
+	if len(paginatedFiles) == 0 {
+		paginatedFiles = []FileInfo{}
+	}
 	return &FilePiResonse{
 		TotalFiles: totalFiles,
 		Files:      paginatedFiles,
@@ -133,6 +138,7 @@ func (fs *FileServer) GetVideos(path string, skip, limit int, recursive bool, so
 	if err != nil {
 		return nil, err
 	}
+	requestedPath := path
 	var videoContents []FileInfo
 	err = filepath.Walk(absPath, func(path string, info os.FileInfo, err error) error {
 
@@ -155,6 +161,8 @@ func (fs *FileServer) GetVideos(path string, skip, limit int, recursive bool, so
 					FileType:     mimeType,
 					Owner:        fs.getFileOwner(info),
 					FullName:     relPath,
+					ParentDir:    requestedPath,
+					RelPath:      filepath.Join(requestedPath, relPath),
 				})
 			}
 		}
@@ -205,6 +213,9 @@ func (fs *FileServer) GetVideos(path string, skip, limit int, recursive bool, so
 	if limit > 0 && limit < len(paginatedFiles) {
 		paginatedFiles = paginatedFiles[:limit]
 	}
+	if len(paginatedFiles) == 0 {
+		paginatedFiles = []FileInfo{}
+	}
 	return &FilePiResonse{
 		TotalFiles: totalFiles,
 		Files:      paginatedFiles,
@@ -233,6 +244,8 @@ func (fs *FileServer) Search(query, path string, skip, limit int, sortBy, order 
 				FileType:     mime.TypeByExtension(filepath.Ext(info.Name())),
 				Owner:        fs.getFileOwner(info),
 				FullName:     strings.TrimPrefix(path, fs.RootDir),
+				ParentDir:    path,
+				RelPath:      filepath.Join(path, strings.TrimPrefix(path, fs.RootDir)),
 			})
 		}
 		return nil

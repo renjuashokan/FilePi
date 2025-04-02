@@ -20,6 +20,10 @@ type FileInfo struct {
 	ModifiedTime int64  `json:"modified_time"`
 	FileType     string `json:"file_type,omitempty"`
 	Owner        string `json:"owner"`
+	// the parent directory of the file
+	ParentDir string `json:"parent_dir,omitempty"`
+	// path to file from $FILE_PI_ROOT_DIR
+	RelPath string `json:"rel_path,omitempty"`
 }
 
 type FilePiResonse struct {
