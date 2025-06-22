@@ -373,6 +373,43 @@ func (fs *FileServer) CreateFolder(path, folderName string) (string, error) {
 	return newFolderPath, nil
 }
 
+func (fs *FileServer) Move(oldPath, newPath string) error {
+	// Get absolute paths
+	oldAbsPath, err := fs.getAbsolutePath(oldPath)
+	if err != nil {
+		return fmt.Errorf("invalid old path: %w", err)
+	}
+
+	newAbsPath, err := fs.getAbsolutePath(newPath)
+	if err != nil {
+		return fmt.Errorf("invalid new path: %w", err)
+	}
+
+	// Check if source exists
+	if _, err := os.Stat(oldAbsPath); os.IsNotExist(err) {
+		return fmt.Errorf("source file/folder does not exist: %s", oldPath)
+	}
+
+	// Check if destination already exists
+	if _, err := os.Stat(newAbsPath); err == nil {
+		return fmt.Errorf("destination already exists: %s", newPath)
+	}
+
+	// Create destination directory if it doesn't exist
+	newDir := filepath.Dir(newAbsPath)
+	if err := os.MkdirAll(newDir, os.ModePerm); err != nil {
+		return fmt.Errorf("failed to create destination directory: %w", err)
+	}
+
+	// Rename/move the file or folder
+	if err := os.Rename(oldAbsPath, newAbsPath); err != nil {
+		return fmt.Errorf("failed to rename/move: %w", err)
+	}
+
+	log.Infof("Successfully renamed/moved from %s to %s", oldPath, newPath)
+	return nil
+}
+
 func (fs *FileServer) saveUploadedFile(file io.Reader, location, fileName string) (string, error) {
 	absPath, err := fs.getAbsolutePath(location)
 	if err != nil {

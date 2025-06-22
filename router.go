@@ -227,6 +227,48 @@ func setupRoutes(fs *FileServer) {
 		})
 	})
 
+	api.Post("/mv", func(c *fiber.Ctx) error {
+		var req MoveRequest
+
+		if err := c.BodyParser(&req); err != nil {
+			log.Error("Error parsing request body: ", err)
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Invalid request body: " + err.Error(),
+			})
+		}
+
+		log.Info("Move/rename request - from: ", req.OldPath, " to: ", req.NewPath)
+
+		if req.OldPath == "" || req.NewPath == "" {
+			log.Warn("Missing required fields in move/rename request")
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Missing required fields: old_path or new_path",
+			})
+		}
+
+		// Validate paths are different
+		if req.OldPath == req.NewPath {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Source and destination paths cannot be the same",
+			})
+		}
+
+		err := fs.Move(req.OldPath, req.NewPath)
+		if err != nil {
+			log.Error("Error in move/rename operation: ", err)
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": err.Error(),
+			})
+		}
+
+		log.Info("Move/rename completed successfully")
+		return c.JSON(fiber.Map{
+			"message":  "File/folder moved/renamed successfully",
+			"old_path": req.OldPath,
+			"new_path": req.NewPath,
+		})
+	})
+
 	log.Info("Starting server on port 8080")
 	log.Fatal(app.Listen(":8080"))
 }
