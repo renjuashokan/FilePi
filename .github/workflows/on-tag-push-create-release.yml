@@ -1,0 +1,269 @@
+name: Create FilePI Go Server Release from Tag
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+      - "v*.*.*-*"  # For pre-releases like v1.0.1-rc1
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  common-vars:
+    name: Setup Release Variables
+    runs-on: ubuntu-latest
+    outputs:
+      tag-name: ${{ github.ref_name }}
+      release-name: ${{ steps.set-release-name.outputs.release-name }}
+      is-prerelease: ${{ steps.check-prerelease.outputs.is-prerelease }}
+      latest-run-id: ${{ steps.get-latest-build.outputs.run-id }}
+
+    steps:
+    - name: Echo context data
+      run: |
+        echo "github.ref - ${{github.ref}}"
+        echo "github.ref_name - ${{github.ref_name}}"
+        echo "github.event_name - ${{github.event_name}}"
+
+    - name: Set release name
+      id: set-release-name
+      run: |
+        TAG_NAME="${{ github.ref_name }}"
+        RELEASE_NAME="FilePI Go Server ${TAG_NAME}"
+        echo "release-name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
+        echo "Release name: ${RELEASE_NAME}"
+
+    - name: Check if prerelease
+      id: check-prerelease
+      run: |
+        TAG_NAME="${{ github.ref_name }}"
+        if [[ "$TAG_NAME" == *"-"* ]]; then
+          echo "is-prerelease=true" >> "$GITHUB_OUTPUT"
+          echo "This is a prerelease: $TAG_NAME"
+        else
+          echo "is-prerelease=false" >> "$GITHUB_OUTPUT"
+          echo "This is a stable release: $TAG_NAME"
+        fi
+
+    - name: Get latest successful build from main_go
+      id: get-latest-build
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const runs = await github.rest.actions.listWorkflowRuns({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            workflow_id: 'on-push-build-all.yml',
+            branch: 'main_go',
+            status: 'completed',
+            conclusion: 'success',
+            per_page: 1
+          });
+          
+          if (runs.data.workflow_runs.length === 0) {
+            core.setFailed('No successful builds found on main_go branch');
+            return;
+          }
+          
+          const latestRun = runs.data.workflow_runs[0];
+          console.log(`Latest successful run: ${latestRun.id} (${latestRun.head_sha})`);
+          core.setOutput('run-id', latestRun.id);
+          core.setOutput('commit-sha', latestRun.head_sha);
+
+  download-artifacts:
+    name: Download Latest Build Artifacts
+    needs: common-vars
+    runs-on: ubuntu-latest
+    env:
+      ARTIFACTS_DIR: ./artifacts
+      RELEASE_DIR: ./release
+
+    steps:
+    - name: Create artifact directories
+      run: |
+        mkdir -p ${{ env.ARTIFACTS_DIR }} ${{ env.RELEASE_DIR }}
+
+    - name: Download artifacts from latest main_go build
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          
+          // Get artifacts from the latest successful run
+          const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            run_id: ${{ needs.common-vars.outputs.latest-run-id }}
+          });
+          
+          console.log(`Found ${artifacts.data.artifacts.length} artifacts`);
+          
+          // Filter for filepi artifacts (both binaries and debian packages)
+          const filepiArtifacts = artifacts.data.artifacts.filter(artifact => 
+            artifact.name.includes('filepi')
+          );
+          
+          if (filepiArtifacts.length === 0) {
+            core.setFailed('No FilePI artifacts found in the latest build');
+            return;
+          }
+          
+          for (const artifact of filepiArtifacts) {
+            console.log(`Downloading artifact: ${artifact.name}`);
+            
+            const download = await github.rest.actions.downloadArtifact({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              artifact_id: artifact.id,
+              archive_format: 'zip'
+            });
+            
+            const artifactPath = path.join('${{ env.ARTIFACTS_DIR }}', `${artifact.name}.zip`);
+            fs.writeFileSync(artifactPath, Buffer.from(download.data));
+            console.log(`Saved to: ${artifactPath}`);
+          }
+
+    - name: Extract and prepare release assets
+      run: |
+        TAG_NAME="${{ needs.common-vars.outputs.tag-name }}"
+        
+        echo "Extracting artifacts..."
+        cd ${{ env.ARTIFACTS_DIR }}
+        
+        # Extract all downloaded zip files
+        for zip_file in *.zip; do
+          if [ -f "$zip_file" ]; then
+            echo "Extracting $zip_file"
+            unzip -q "$zip_file"
+            rm "$zip_file"
+          fi
+        done
+        
+        cd "${{ github.workspace }}"
+        
+        echo "Contents of artifacts directory:"
+        find ${{ env.ARTIFACTS_DIR }} -type f -exec ls -la {} \;
+        
+        # Rename artifacts to include tag version instead of build number
+        echo "Preparing release assets..."
+        
+        # Process binary tarballs
+        for tarball in ${{ env.ARTIFACTS_DIR }}/*.tar.gz; do
+          if [ -f "$tarball" ]; then
+            filename=$(basename "$tarball")
+            # Replace the build name with tag name in filename
+            new_filename=$(echo "$filename" | sed "s/main_go_[0-9]\+/${TAG_NAME}/g")
+            cp "$tarball" "${{ env.RELEASE_DIR }}/${new_filename}"
+            echo "Prepared: ${new_filename}"
+          fi
+        done
+        
+        # Process Debian packages
+        for deb in ${{ env.ARTIFACTS_DIR }}/*.deb; do
+          if [ -f "$deb" ]; then
+            filename=$(basename "$deb")
+            # Replace the build name with tag name in filename
+            new_filename=$(echo "$filename" | sed "s/main_go_[0-9]\+/${TAG_NAME}/g")
+            cp "$deb" "${{ env.RELEASE_DIR }}/${new_filename}"
+            echo "Prepared: ${new_filename}"
+          fi
+        done
+        
+        echo "Release assets prepared:"
+        ls -la ${{ env.RELEASE_DIR }}/
+
+    - name: Upload prepared release assets
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-assets-${{ needs.common-vars.outputs.tag-name }}
+        path: ${{ env.RELEASE_DIR }}
+
+  create-release:
+    name: Create GitHub Release
+    needs: 
+      - common-vars
+      - download-artifacts
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_DIR: ./release
+
+    steps:
+    - name: Download prepared release assets
+      uses: actions/download-artifact@v4
+      with:
+        name: release-assets-${{ needs.common-vars.outputs.tag-name }}
+        path: ${{ env.RELEASE_DIR }}
+
+    - name: Create Release Notes
+      run: |
+        TAG_NAME="${{ needs.common-vars.outputs.tag-name }}"
+        cat > ${{ env.RELEASE_DIR }}/RELEASE_NOTES.md << EOF
+        FilePi is a lightweight network file browser for Raspberry Pi and resource-constrained devices. Browse, stream, and manage files from any web browser or the [Pi View mobile app](https://github.com/renjuashokan/pi_view).
+        
+        ## Quick Start
+        
+        **Prerequisites:** FFmpeg is required (\`sudo apt install ffmpeg\`)
+        
+        ### Debian Package (Recommended)
+        1. Download: \`filepi_${TAG_NAME}_<arch>.deb\`
+        2. Install: \`sudo dpkg -i filepi_${TAG_NAME}_<arch>.deb\`
+        
+        Service starts automatically on port 8080.
+        
+        ### Binary
+        1. Download: \`filepi-${TAG_NAME}-linux-<arch>.tar.gz\`
+        2. Extract and run: \`tar -xzf filepi-*.tar.gz && ./filepi-*\`
+        3. Set media directory: \`export FILE_PI_ROOT_DIR=/path/to/your/files\`
+        
+        ## Documentation
+        
+        📖 **[Complete Installation Guide](DEBIAN-INSTALL.md)** - Detailed Debian package installation, configuration, and service management
+        
+        📚 **[Full Documentation](README.md)** - Features, API endpoints, configuration options, and development setup
+        
+        ## Access Your Files
+        - **Web:** \`http://[device-ip]:8080\`
+        - **Mobile:** [Pi View app](https://github.com/renjuashokan/pi_view)
+        
+        EOF
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        name: ${{ needs.common-vars.outputs.release-name }}
+        tag_name: ${{ needs.common-vars.outputs.tag-name }}
+        body_path: ${{ env.RELEASE_DIR }}/RELEASE_NOTES.md
+        draft: false
+        prerelease: ${{ needs.common-vars.outputs.is-prerelease }}
+        files: |
+          ${{ env.RELEASE_DIR }}/filepi-*.tar.gz
+          ${{ env.RELEASE_DIR }}/filepi_*.deb
+        fail_on_unmatched_files: false
+
+    - name: Clean up temporary artifacts
+      uses: geekyeggo/delete-artifact@v5
+      with:
+        name: |
+          release-assets-${{ needs.common-vars.outputs.tag-name }}
+
+    - name: Release Summary
+      run: |
+        echo "## FilePI Go Server Release Created Successfully! 🎉" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Tag:** ${{ needs.common-vars.outputs.tag-name }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Release Name:** ${{ needs.common-vars.outputs.release-name }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Prerelease:** ${{ needs.common-vars.outputs.is-prerelease }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Source Build:** Run #${{ needs.common-vars.outputs.latest-run-id }} from main_go" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Assets:" >> $GITHUB_STEP_SUMMARY
+        for file in ${{ env.RELEASE_DIR }}/*; do
+          if [ -f "$file" ] && [[ "$file" != *"RELEASE_NOTES.md" ]]; then
+            filename=$(basename "$file")
+            size=$(ls -lh "$file" | awk '{print $5}')
+            echo "- $filename ($size)" >> $GITHUB_STEP_SUMMARY
+          fi
+        done
+        echo "" >> $GITHUB_STEP_SUMMARY
