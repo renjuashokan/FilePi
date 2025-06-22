@@ -212,7 +212,7 @@ jobs:
         1. Download: \`filepi_${TAG_NAME}_<arch>.deb\`
         2. Install: \`sudo dpkg -i filepi_${TAG_NAME}_<arch>.deb\`
         
-        Service starts automatically on port 8080.
+        Service starts automatically on port 8080. Access at \`http://[device-ip]:8080\`
         
         ### Binary
         1. Download: \`filepi-${TAG_NAME}-linux-<arch>.tar.gz\`
@@ -226,7 +226,8 @@ jobs:
         📚 **[Full Documentation](README.md)** - Features, API endpoints, configuration options, and development setup
         
         ## Access Your Files
-        - **Android Tv:** [PiTV explorer Android TV App](https://github.com/renjuashokan/PiTVExplorer)
+        - **Web Browser:** \`http://[device-ip]:[port]\` (default port 8080)
+        - **Android TV:** [PiTV explorer Android TV App](https://github.com/renjuashokan/PiTVExplorer)
         - **Mobile:** [Pi View app](https://github.com/renjuashokan/pi_view)
         
         EOF

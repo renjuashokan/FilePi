@@ -28,6 +28,7 @@ This document provides instructions for installing FilePi using the Debian packa
 
 - The FilePi service will be automatically enabled and started
 - Files are served from `/var/lib/filepi/media` by default
+- Service runs on port 8080 by default
 
 ## Configuration
 
@@ -42,6 +43,24 @@ This document provides instructions for installing FilePi using the Debian packa
    ```ini
    [Service]
    Environment=FILE_PI_ROOT_DIR=/your/preferred/path
+   ```
+
+3. Restart the service:
+   ```bash
+   sudo systemctl restart filepi.service
+   ```
+
+### Changing the server port
+
+1. Edit the systemd service file:
+   ```bash
+   sudo systemctl edit filepi.service
+   ```
+
+2. Add the following lines:
+   ```ini
+   [Service]
+   Environment=FILE_PI_PORT=8012
    ```
 
 3. Restart the service:
@@ -66,6 +85,21 @@ This document provides instructions for installing FilePi using the Debian packa
    ```bash
    sudo systemctl restart filepi.service
    ```
+
+### Multiple configuration options
+
+You can combine multiple environment variables in a single override:
+
+```bash
+sudo systemctl edit filepi.service
+```
+
+```ini
+[Service]
+Environment=FILE_PI_ROOT_DIR=/your/preferred/path
+Environment=FILE_PI_PORT=8012
+Environment=FILE_PI_LOGLEVEL=INFO
+```
 
 ## Service Management
 

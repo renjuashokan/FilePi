@@ -36,6 +36,9 @@ brew install ffmpeg
 # Set the root directory for file browsing
 export FILE_PI_ROOT_DIR=/path/to/your/files
 
+# Optional: Set custom port (default: 8080)
+export FILE_PI_PORT=3000
+
 # Optional: Set log level (DEBUG, INFO, WARN, ERROR)
 export FILE_PI_LOGLEVEL=INFO
 ```
@@ -51,7 +54,7 @@ export FILE_PI_LOGLEVEL=INFO
 
 ### 4. Access the File Browser
 
-- Web interface: Open `http://[device-ip]:8080` in your browser
+- Web interface: Open `http://[device-ip]:[port]` in your browser (default port: 8080)
 - Mobile: Install the [Pi View app](https://github.com/renjuashokan/pi_view) and connect to your device
 
 ## API Endpoints
@@ -72,7 +75,23 @@ export FILE_PI_LOGLEVEL=INFO
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `FILE_PI_ROOT_DIR` | Current directory | Root directory for file browsing |
+| `FILE_PI_PORT` | 8080 | Port number for the HTTP server |
 | `FILE_PI_LOGLEVEL` | INFO | Log level (DEBUG, INFO, WARN, ERROR) |
+
+## Examples
+
+### Running on different ports
+
+```bash
+# Run on port 3000
+FILE_PI_PORT=3000 ./filepi
+
+# Run on port 9090 with custom directory
+FILE_PI_PORT=9090 FILE_PI_ROOT_DIR=/home/user/media ./filepi
+
+# Run with all custom settings
+FILE_PI_PORT=8888 FILE_PI_ROOT_DIR=/srv/files FILE_PI_LOGLEVEL=DEBUG ./filepi
+```
 
 ## Mobile App
 

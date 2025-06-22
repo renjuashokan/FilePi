@@ -34,9 +34,15 @@ func main() {
 	}
 	log.Infof("Root directory: %s", rootDir)
 
+	port := os.Getenv("FILE_PI_PORT")
+	if port == "" {
+		port = HTTP_PORT
+	}
+	log.Infof("Server will start on port: %s", port)
+
 	tempDir := filepath.Join(rootDir, ".cache")
 
 	fs := NewFileServer(rootDir, tempDir)
 	log.Info("Starting server on root directory: ->", rootDir)
-	setupRoutes(fs)
+	setupRoutes(fs, port)
 }
