@@ -35,7 +35,7 @@ func RequestLogger() fiber.Handler {
 	}
 }
 
-func setupRoutes(fs *FileServer) {
+func setupRoutes(fs *FileServer, port string) {
 
 	// Configure Fiber with appropriate settings for file uploads
 	app := fiber.New(fiber.Config{
@@ -269,6 +269,6 @@ func setupRoutes(fs *FileServer) {
 		})
 	})
 
-	log.Info("Starting server on port 8080")
-	log.Fatal(app.Listen(":8080"))
+	log.Infof("Starting server on port %s", port)
+	log.Fatal(app.Listen(":" + port))
 }
