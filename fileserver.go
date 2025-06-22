@@ -26,7 +26,6 @@ func NewFileServer(rootDir, tempDir string) *FileServer {
 }
 
 func (fs *FileServer) getAbsolutePath(relativePath string) (string, error) {
-
 	relativePath, err := url.QueryUnescape(relativePath)
 	if err != nil {
 		log.Error("Error unescaping path: ", err)
@@ -35,9 +34,6 @@ func (fs *FileServer) getAbsolutePath(relativePath string) (string, error) {
 	cleanPath := filepath.Clean(strings.TrimPrefix(relativePath, "/"))
 	absPath := filepath.Join(fs.RootDir, cleanPath)
 	log.Info("Absolute path: ", absPath)
-	// if !strings.HasPrefix(absPath, fs.RootDir) {
-	// 	return "", errors.New("path is outside of root directory")
-	// }
 	return absPath, nil
 }
 
@@ -45,8 +41,66 @@ func (fs *FileServer) getFileOwner(info os.FileInfo) string {
 	return "user1"
 }
 
-func (fs *FileServer) GetFiles(path string, skip, limit int, sortBy, order string) (*FilePiResonse, error) {
+// Centralized sorting function that handles directories-first logic
+func (fs *FileServer) sortFileInfos(files []FileInfo, sortBy, order string) error {
+	if sortBy != "" && !contains(fs.ValidSortFields, sortBy) {
+		return fmt.Errorf("invalid sort field: %s", sortBy)
+	}
 
+	if sortBy != "" {
+		reverse := order == "desc"
+		sort.Slice(files, func(i, j int) bool {
+			// ALWAYS sort directories first, then files - for ALL sort criteria
+			if files[i].IsDirectory != files[j].IsDirectory {
+				return files[i].IsDirectory // directories come first
+			}
+
+			// If both are directories or both are files, then sort by the specified field
+			switch sortBy {
+			case "name":
+				if reverse {
+					return files[i].Name > files[j].Name
+				}
+				return files[i].Name < files[j].Name
+			case "size":
+				if reverse {
+					return files[i].Size > files[j].Size
+				}
+				return files[i].Size < files[j].Size
+			case "modified_time":
+				if reverse {
+					return files[i].ModifiedTime > files[j].ModifiedTime
+				}
+				return files[i].ModifiedTime < files[j].ModifiedTime
+			case "created_time":
+				if reverse {
+					return files[i].CreatedTime > files[j].CreatedTime
+				}
+				return files[i].CreatedTime < files[j].CreatedTime
+			case "file_type":
+				if reverse {
+					return files[i].FileType > files[j].FileType
+				}
+				return files[i].FileType < files[j].FileType
+			default:
+				return false
+			}
+		})
+	} else {
+		// Default sorting: directories first, then by name
+		sort.Slice(files, func(i, j int) bool {
+			// Always sort directories first, then files
+			if files[i].IsDirectory != files[j].IsDirectory {
+				return files[i].IsDirectory // directories come first
+			}
+			// If both are directories or both are files, sort by name
+			return files[i].Name < files[j].Name
+		})
+	}
+	return nil
+}
+
+func (fs *FileServer) GetFiles(path string, skip, limit int, sortBy, order string) (*FilePiResonse, error) {
 	absPath, err := fs.getAbsolutePath(path)
 	if err != nil {
 		return nil, err
@@ -74,49 +128,16 @@ func (fs *FileServer) GetFiles(path string, skip, limit int, sortBy, order strin
 			FileType:     fileType,
 			Owner:        fs.getFileOwner(info),
 			FullName:     entry.Name(),
-			ParentDir:    path,                              // the requested path
-			RelPath:      filepath.Join(path, entry.Name()), // requested path + file name
+			ParentDir:    path,
+			RelPath:      filepath.Join(path, entry.Name()),
 		})
 	}
 
-	if sortBy != "" && !contains(fs.ValidSortFields, sortBy) {
-		return nil, fmt.Errorf("invalid sort field: %s", sortBy)
+	// Use centralized sorting function
+	if err := fs.sortFileInfos(contents, sortBy, order); err != nil {
+		return nil, err
 	}
 
-	if sortBy != "" {
-		reverse := order == "desc"
-		sort.Slice(contents, func(i, j int) bool {
-			switch sortBy {
-			case "name":
-				if reverse {
-					return contents[i].Name > contents[j].Name
-				}
-				return contents[i].Name < contents[j].Name
-			case "size":
-				if reverse {
-					return contents[i].Size > contents[j].Size
-				}
-				return contents[i].Size < contents[j].Size
-			case "modified_time":
-				if reverse {
-					return contents[i].ModifiedTime > contents[j].ModifiedTime
-				}
-				return contents[i].ModifiedTime < contents[j].ModifiedTime
-			case "created_time":
-				if reverse {
-					return contents[i].CreatedTime > contents[j].CreatedTime
-				}
-				return contents[i].CreatedTime < contents[j].CreatedTime
-			case "file_type":
-				if reverse {
-					return contents[i].FileType > contents[j].FileType
-				}
-				return contents[i].FileType < contents[j].FileType
-			default:
-				return false
-			}
-		})
-	}
 	totalFiles := len(contents)
 	paginatedFiles := contents[skip:]
 	if limit > 0 && limit < len(paginatedFiles) {
@@ -141,7 +162,6 @@ func (fs *FileServer) GetVideos(path string, skip, limit int, recursive bool, so
 	requestedPath := path
 	var videoContents []FileInfo
 	err = filepath.Walk(absPath, func(path string, info os.FileInfo, err error) error {
-
 		if err != nil {
 			return err
 		}
@@ -171,43 +191,12 @@ func (fs *FileServer) GetVideos(path string, skip, limit int, recursive bool, so
 	if err != nil {
 		return nil, fmt.Errorf("error reading directory: %w", err)
 	}
-	if sortBy != "" && !contains(fs.ValidSortFields, sortBy) {
-		return nil, fmt.Errorf("invalid sort field: %s", sortBy)
+
+	// Use centralized sorting function
+	if err := fs.sortFileInfos(videoContents, sortBy, order); err != nil {
+		return nil, err
 	}
-	if sortBy != "" {
-		reverse := order == "desc"
-		sort.Slice(videoContents, func(i, j int) bool {
-			switch sortBy {
-			case "name":
-				if reverse {
-					return videoContents[i].Name > videoContents[j].Name
-				}
-				return videoContents[i].Name < videoContents[j].Name
-			case "size":
-				if reverse {
-					return videoContents[i].Size > videoContents[j].Size
-				}
-				return videoContents[i].Size < videoContents[j].Size
-			case "modified_time":
-				if reverse {
-					return videoContents[i].ModifiedTime > videoContents[j].ModifiedTime
-				}
-				return videoContents[i].ModifiedTime < videoContents[j].ModifiedTime
-			case "created_time":
-				if reverse {
-					return videoContents[i].CreatedTime > videoContents[j].CreatedTime
-				}
-				return videoContents[i].CreatedTime < videoContents[j].CreatedTime
-			case "file_type":
-				if reverse {
-					return videoContents[i].FileType > videoContents[j].FileType
-				}
-				return videoContents[i].FileType < videoContents[j].FileType
-			default:
-				return false
-			}
-		})
-	}
+
 	totalFiles := len(videoContents)
 	paginatedFiles := videoContents[skip:]
 	if limit > 0 && limit < len(paginatedFiles) {
@@ -253,43 +242,12 @@ func (fs *FileServer) Search(query, path string, skip, limit int, sortBy, order 
 	if err != nil {
 		return nil, fmt.Errorf("error reading directory: %w", err)
 	}
-	if sortBy != "" && !contains(fs.ValidSortFields, sortBy) {
-		return nil, fmt.Errorf("invalid sort field: %s", sortBy)
+
+	// Use centralized sorting function
+	if err := fs.sortFileInfos(matchingFiles, sortBy, order); err != nil {
+		return nil, err
 	}
-	if sortBy != "" {
-		reverse := order == "desc"
-		sort.Slice(matchingFiles, func(i, j int) bool {
-			switch sortBy {
-			case "name":
-				if reverse {
-					return matchingFiles[i].Name > matchingFiles[j].Name
-				}
-				return matchingFiles[i].Name < matchingFiles[j].Name
-			case "size":
-				if reverse {
-					return matchingFiles[i].Size > matchingFiles[j].Size
-				}
-				return matchingFiles[i].Size < matchingFiles[j].Size
-			case "modified_time":
-				if reverse {
-					return matchingFiles[i].ModifiedTime > matchingFiles[j].ModifiedTime
-				}
-				return matchingFiles[i].ModifiedTime < matchingFiles[j].ModifiedTime
-			case "created_time":
-				if reverse {
-					return matchingFiles[i].CreatedTime > matchingFiles[j].CreatedTime
-				}
-				return matchingFiles[i].CreatedTime < matchingFiles[j].CreatedTime
-			case "file_type":
-				if reverse {
-					return matchingFiles[i].FileType > matchingFiles[j].FileType
-				}
-				return matchingFiles[i].FileType < matchingFiles[j].FileType
-			default:
-				return false
-			}
-		})
-	}
+
 	totalFiles := len(matchingFiles)
 	paginatedFiles := matchingFiles[skip:]
 	if limit > 0 && limit < len(paginatedFiles) {
