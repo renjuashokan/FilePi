@@ -32,3 +32,8 @@ type FilePiResonse struct {
 	Skip       int        `json:"skip"`
 	Limit      int        `json:"limit"`
 }
+
+type MoveRequest struct {
+	OldPath string `json:"old_path"`
+	NewPath string `json:"new_path"`
+}
