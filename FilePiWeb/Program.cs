@@ -1,0 +1,78 @@
+using System.Text.Json;
+using Microsoft.AspNetCore.Components.Web;
+using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
+using FilePiWeb;
+using FilePiWeb.Interfaces;
+using FilePiWeb.Services;
+using Refit;
+using Serilog;
+using Serilog.Core;
+
+// Configure Serilog for WebAssembly (browser console only)
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Debug()
+    //.MinimumLevel.Override("Microsoft", LogEventLevel.Information)
+    .Enrich.FromLogContext()
+    .CreateLogger();
+
+try
+{
+    Log.Information("Starting FilePi WebAssembly Application");
+
+    var builder = WebAssemblyHostBuilder.CreateDefault(args);
+
+    // Add Serilog to the DI container
+    builder.Services.AddLogging(loggingBuilder =>
+        loggingBuilder.AddSerilog(dispose: true));
+
+    builder.RootComponents.Add<App>("#app");
+    builder.RootComponents.Add<HeadOutlet>("head::after");
+
+    // Configure Refit with proper JSON settings
+    var refitSettings = new RefitSettings
+    {
+        ContentSerializer = new SystemTextJsonContentSerializer(
+            new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+                PropertyNameCaseInsensitive = true
+            })
+    };
+
+    // Get port from environment variable or use default with error handling
+    var portString = Environment.GetEnvironmentVariable("FILE_PI_PORT");
+    int port = 8080; // default port
+
+    if (!string.IsNullOrEmpty(portString) && int.TryParse(portString, out var parsedPort))
+    {
+        port = parsedPort;
+    }
+
+    // Build the API base URL using UriBuilder
+    var baseAddress = new Uri(builder.HostEnvironment.BaseAddress);
+    var apiBaseUrl = new UriBuilder
+    {
+        Scheme = baseAddress.Scheme,
+        Host = baseAddress.Host,
+        Port = port
+    }.Uri;
+
+    Log.Information("API Base URL: {ApiBaseUrl}", apiBaseUrl);
+
+    // Register Refit client with dynamic port
+    builder.Services.AddRefitClient<IFilePiApi>(refitSettings)
+        .ConfigureHttpClient(c => c.BaseAddress = apiBaseUrl);
+
+
+    builder.Services.AddSingleton<IFileService, FileService>();
+
+    await builder.Build().RunAsync();
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "Application terminated unexpectedly");
+}
+finally
+{
+    Log.CloseAndFlush();
+}

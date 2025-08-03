@@ -1,0 +1,692 @@
+@page "/"
+@page "/FileBrowser"
+@page "/files"
+@page "/files/{currentPath?}"
+
+@using FilePiWeb.Models
+@using FilePiWeb.Interfaces
+@inject IFileService FileService
+@inject IJSRuntime JSRuntime
+@inject NavigationManager Navigation
+
+<PageTitle>File Browser - FilePi</PageTitle>
+
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2><i class="fas fa-folder-open"></i> File Browser</h2>
+                <div class="btn-group">
+                    <button class="btn btn-primary" @onclick="ShowCreateFolderModal">
+                        <i class="fas fa-folder-plus"></i> New Folder
+                    </button>
+                    <button class="btn btn-success" @onclick="ShowUploadModal">
+                        <i class="fas fa-upload"></i> Upload Files
+                    </button>
+                    <button class="btn btn-info" @onclick="() => LoadFiles(CurrentPath)">
+                        <i class="fas fa-sync-alt"></i> Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Fix for the breadcrumb navigation section -->
+        <nav aria-label="breadcrumb" class="mb-3">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item">
+                    <a href="#" @onclick="OnRootClicked" @onclick:preventDefault="true">
+                        <i class="fas fa-home"></i> Root
+                    </a>
+                </li>
+                @if (!string.IsNullOrEmpty(CurrentPath))
+                {
+                    var pathParts = CurrentPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                    var currentBreadcrumb = "";
+                    
+                    @for (int i = 0; i < pathParts.Length; i++)
+                    {
+                        currentBreadcrumb += pathParts[i];
+                        var breadcrumbPath = currentBreadcrumb;
+                        <li class="breadcrumb-item @(i == pathParts.Length - 1 ? "active" : "")">
+                            @if (i == pathParts.Length - 1)
+                            {
+                                @pathParts[i]
+                            }
+                            else
+                            {
+                                <a href="#" @onclick="() => OnFolderClicked(breadcrumbPath)" @onclick:preventDefault="true">
+                                    @pathParts[i]
+                                </a>
+                            }
+                        </li>
+                        currentBreadcrumb += "/";
+                    }
+                }
+            </ol>
+        </nav>
+
+        <!-- Search and Controls -->
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <div class="input-group">
+                        <input type="text" class="form-control" placeholder="Search files..." @bind="SearchQuery" @onkeypress="OnSearchKeyPress">
+                        <button class="btn btn-outline-secondary" type="button" @onclick="SearchFiles">
+                            <i class="fas fa-search"></i> Search
+                        </button>
+                        @if (!string.IsNullOrEmpty(SearchQuery))
+                        {
+                            <button class="btn btn-outline-danger" type="button" @onclick="ClearSearch">
+                                <i class="fas fa-times"></i> Clear
+                            </button>
+                        }
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="d-flex gap-2">
+                        <select class="form-select" @bind="SortBy" @bind:after="OnSortChanged">
+                            <option value="name">Sort by Name</option>
+                            <option value="size">Sort by Size</option>
+                            <option value="modified_time">Sort by Modified</option>
+                            <option value="file_type">Sort by Type</option>
+                        </select>
+                        <select class="form-select" @bind="SortOrder" @bind:after="OnSortChanged">
+                            <option value="asc">Ascending</option>
+                            <option value="desc">Descending</option>
+                        </select>
+                        <select class="form-select" @bind="PageSize" @bind:after="OnPageSizeChanged">
+                            <option value="10">10 per page</option>
+                            <option value="25">25 per page</option>
+                            <option value="50">50 per page</option>
+                            <option value="100">100 per page</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Loading Indicator -->
+            @if (IsLoading)
+            {
+                <div class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2">Loading files...</p>
+                </div>
+            }
+            else if (ErrorMessage != null)
+            {
+                <div class="alert alert-danger" role="alert">
+                    <i class="fas fa-exclamation-triangle"></i> @ErrorMessage
+                </div>
+            }
+            else if (FilesResponse?.Files?.Any() == true)
+            {
+                <!-- File List -->
+                <div class="card">
+                    <div class="card-header">
+                        <span>@FilesResponse.TotalFiles file(s) - Page @(CurrentPage + 1) of @(Math.Ceiling((double)FilesResponse.TotalFiles / PageSize))</span>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0">
+                                <thead>
+                                    <tr>
+                                        <th width="40"><i class="fas fa-file"></i></th>
+                                        <th>Name</th>
+                                        <th width="100">Size</th>
+                                        <th width="180">Modified</th>
+                                        <th width="120">Type</th>
+                                        <th width="150">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var file in FilesResponse.Files)
+                                    {
+                                        <tr class="@(GetFileSelection(file.RelPath) ? "table-active" : "")">
+                                            <td>
+                                                <input type="checkbox" 
+       checked="@GetFileSelection(file.RelPath)" 
+       @onchange="@((ChangeEventArgs e) => ToggleFileSelection(file.RelPath, (bool)e.Value!))" />
+                                            </td>
+                                            <td>
+                                                <div class="d-flex align-items-center">
+                                                    @if (file.IsDirectory)
+                                                    {
+                                                        <i class="fas fa-folder text-warning me-2"></i>
+                                                        <a href="#" @onclick="() => NavigateTo(file.RelPath)" @onclick:preventDefault="true" class="text-decoration-none">
+                                                            @file.Name
+                                                        </a>
+                                                    }
+                                                    else
+                                                    {
+                                                        <i class="fas @GetFileIcon(file.FileType) me-2"></i>
+                                                        @file.Name
+                                                    }
+                                                </div>
+                                            </td>
+                                            <td>
+                                                @if (!file.IsDirectory)
+                                                {
+                                                    @FormatFileSize(file.Size)
+                                                }
+                                            </td>
+                                            <td>@DateTimeOffset.FromUnixTimeMilliseconds(file.ModifiedTime).ToString("yyyy-MM-dd HH:mm")</td>
+                                            <td>
+                                                @if (file.IsDirectory)
+                                                {
+                                                    <span class="badge bg-secondary">Folder</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="badge bg-info">@GetFileTypeDisplay(file.FileType)</span>
+                                                }
+                                            </td>
+                                            <td>
+                                                <div class="btn-group btn-group-sm">
+                                                    @if (!file.IsDirectory)
+                                                    {
+                                                        <button class="btn btn-outline-primary" @onclick="() => DownloadFile(file.RelPath)" title="Download">
+                                                            <i class="fas fa-download"></i>
+                                                        </button>
+                                                        @if (IsVideoFile(file.FileType))
+                                                        {
+                                                            <button class="btn btn-outline-success" @onclick="() => StreamVideo(file.RelPath)" title="Stream">
+                                                                <i class="fas fa-play"></i>
+                                                            </button>
+                                                        }
+                                                    }
+                                                    <button class="btn btn-outline-warning" @onclick="() => ShowRenameModal(file)" title="Rename">
+                                                        <i class="fas fa-edit"></i>
+                                                    </button>
+                                                    <button class="btn btn-outline-danger" @onclick="() => ShowDeleteModal(file)" title="Delete">
+                                                        <i class="fas fa-trash"></i>
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Pagination -->
+                @if (FilesResponse.TotalFiles > PageSize)
+                {
+                    <nav class="mt-3">
+                        <ul class="pagination justify-content-center">
+                            <li class="page-item @(CurrentPage == 0 ? "disabled" : "")">
+                                <button class="page-link" @onclick="() => ChangePage(CurrentPage - 1)" disabled="@(CurrentPage == 0)">
+                                    <i class="fas fa-chevron-left"></i> Previous
+                                </button>
+                            </li>
+                            
+                            @for (int i = Math.Max(0, CurrentPage - 2); i <= Math.Min(MaxPage, CurrentPage + 2); i++)
+                            {
+                                <li class="page-item @(i == CurrentPage ? "active" : "")">
+                                    <button class="page-link" @onclick="() => ChangePage(i)">@(i + 1)</button>
+                                </li>
+                            }
+                            
+                            <li class="page-item @(CurrentPage >= MaxPage ? "disabled" : "")">
+                                <button class="page-link" @onclick="() => ChangePage(CurrentPage + 1)" disabled="@(CurrentPage >= MaxPage)">
+                                    Next <i class="fas fa-chevron-right"></i>
+                                </button>
+                            </li>
+                        </ul>
+                    </nav>
+                }
+            }
+            else
+            {
+                <div class="text-center py-5">
+                    <i class="fas fa-folder-open fa-3x text-muted mb-3"></i>
+                    <h4 class="text-muted">No files found</h4>
+                    <p class="text-muted">This folder is empty or no files match your search criteria.</p>
+                </div>
+            }
+        </div>
+    </div>
+
+
+<!-- Create Folder Modal -->
+<div class="modal fade" id="createFolderModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Create New Folder</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="folderName" class="form-label">Folder Name</label>
+                    <input type="text" class="form-control" id="folderName" @bind="NewFolderName" placeholder="Enter folder name">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" @onclick="CreateFolder" disabled="@(string.IsNullOrWhiteSpace(NewFolderName))">
+                    Create Folder
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Upload Modal -->
+<div class="modal fade" id="uploadModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Upload Files</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="fileInput" class="form-label">Select Files</label>
+                    <InputFile OnChange="OnFilesSelected" multiple class="form-control" id="fileInput" />
+                </div>
+                @if (SelectedFiles?.Any() == true)
+                {
+                    <div class="mb-3">
+                        <h6>Selected Files:</h6>
+                        <ul class="list-group">
+                            @foreach (var file in SelectedFiles)
+                            {
+                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                    @file.Name
+                                    <span class="badge bg-primary rounded-pill">@FormatFileSize(file.Size)</span>
+                                </li>
+                            }
+                        </ul>
+                    </div>
+                }
+                @if (IsUploading)
+                {
+                    <div class="progress mb-3">
+                        <div class="progress-bar" role="progressbar" style="width: @(UploadProgress)%" aria-valuenow="@UploadProgress" aria-valuemin="0" aria-valuemax="100">
+                            @UploadProgress%
+                        </div>
+                    </div>
+                }
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" @onclick="UploadFiles" disabled="@(SelectedFiles?.Any() != true || IsUploading)">
+                    @if (IsUploading)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                    }
+                    Upload Files
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+        @code {
+
+    [Parameter] public string CurrentPath { get; set; } = "";
+
+    // Data properties
+    private FilePiResponse? FilesResponse;
+    private string? ErrorMessage;
+    private bool IsLoading = true;
+
+    // Pagination
+    private int CurrentPage = 0;
+    private int PageSize = 25;
+    private int MaxPage => FilesResponse != null ? Math.Max(0, (int)Math.Ceiling((double)FilesResponse.TotalFiles / PageSize) - 1) : 0;
+
+    // Sorting
+    private string SortBy = "name";
+    private string SortOrder = "asc";
+
+    // Search
+    private string SearchQuery = "";
+    private bool IsSearching = false;
+
+    // File selection
+    private Dictionary<string, bool> selectedFiles = new();
+
+    // Create folder
+    private string NewFolderName = "";
+
+    // File upload
+    private IBrowserFile[]? SelectedFiles;
+    private bool IsUploading = false;
+    private int UploadProgress = 0;
+
+    private void OnRootClicked()
+    {
+        Navigation.NavigateTo("/files");
+    }
+
+    private void OnFolderClicked(string folderName)
+    {
+        Navigation.NavigateTo($"/files/{folderName}");
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        CurrentPath = CurrentPath ?? "";
+        await LoadFiles(CurrentPath);
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (CurrentPath != FilesResponse?.Files?.FirstOrDefault()?.ParentDir)
+        {
+            CurrentPage = 0;
+            await LoadFiles(CurrentPath ?? "");
+        }
+    }
+
+    private async Task LoadFiles(string path)
+    {
+        try
+        {
+            IsLoading = true;
+            ErrorMessage = null;
+            CurrentPath = path;
+            if (string.IsNullOrEmpty(path))
+            {
+                path="";
+            }
+
+            var skip = CurrentPage * PageSize;
+            FilesResponse = await FileService.GetFilesAsync(path, skip, PageSize, SortBy, SortOrder);
+            
+            if (FilesResponse == null)
+            {
+                ErrorMessage = "Failed to load files";
+            }
+            else
+            {
+                // Pre-populate selection map to avoid KeyNotFoundException in @bind.
+                selectedFiles = FilesResponse.Files
+                    .ToDictionary(f => f.RelPath, _ => false);
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Error loading files: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+    
+    private bool GetFileSelection(string filePath)
+    {
+        return selectedFiles.TryGetValue(filePath, out var isSelected) && isSelected;
+    }
+
+    private void ToggleFileSelection(string filePath, bool isSelected)
+    {
+        selectedFiles[filePath] = isSelected;
+        StateHasChanged();
+    }
+    
+    private async Task SearchFiles()
+    {
+        if (string.IsNullOrWhiteSpace(SearchQuery))
+        {
+            await LoadFiles(CurrentPath!);
+            return;
+        }
+
+        try
+        {
+            IsLoading = true;
+            ErrorMessage = null;
+            IsSearching = true;
+
+            var skip = CurrentPage * PageSize;
+            FilesResponse = await FileService.SearchFilesAsync(SearchQuery, CurrentPath!, skip, PageSize, SortBy, SortOrder);
+            
+            if (FilesResponse == null)
+            {
+                ErrorMessage = "Search failed";
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Search error: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task ClearSearch()
+    {
+        SearchQuery = "";
+        IsSearching = false;
+        CurrentPage = 0;
+        await LoadFiles(CurrentPath!);
+    }
+
+    private async Task OnSearchKeyPress(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            CurrentPage = 0;
+            await SearchFiles();
+        }
+    }
+
+    private async Task NavigateTo(string path)
+    {
+        CurrentPage = 0;
+        SearchQuery = "";
+        IsSearching = false;
+        await LoadFiles(path);
+    }
+
+    private async Task ChangePage(int newPage)
+    {
+        CurrentPage = newPage;
+        if (IsSearching)
+        {
+            await SearchFiles();
+        }
+        else
+        {
+            await LoadFiles(CurrentPath!);
+        }
+    }
+
+    private async Task OnSortChanged()
+    {
+        CurrentPage = 0;
+        if (IsSearching)
+        {
+            await SearchFiles();
+        }
+        else
+        {
+            await LoadFiles(CurrentPath!);
+        }
+    }
+
+    private async Task OnPageSizeChanged()
+    {
+        CurrentPage = 0;
+        if (IsSearching)
+        {
+            await SearchFiles();
+        }
+        else
+        {
+            await LoadFiles(CurrentPath!);
+        }
+    }
+
+    private void ToggleFileSelection(string filePath)
+    {
+        // This method is called after the checkbox binding is updated
+        // No additional logic needed since @bind handles the value update
+    }
+
+    private async Task ShowCreateFolderModal()
+    {
+        NewFolderName = "";
+        await JSRuntime.InvokeVoidAsync("eval", "new bootstrap.Modal(document.getElementById('createFolderModal')).show()");
+    }
+
+    private async Task CreateFolder()
+    {
+        if (string.IsNullOrWhiteSpace(NewFolderName)) return;
+
+        try
+        {
+            var success = await FileService.CreateFolderAsync(CurrentPath!, NewFolderName);
+            if (success)
+            {
+                await JSRuntime.InvokeVoidAsync("eval", "bootstrap.Modal.getInstance(document.getElementById('createFolderModal')).hide()");
+                await LoadFiles(CurrentPath!);
+            }
+            else
+            {
+                ErrorMessage = "Failed to create folder";
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Error creating folder: {ex.Message}";
+        }
+    }
+
+    private async Task ShowUploadModal()
+    {
+        SelectedFiles = null;
+        await JSRuntime.InvokeVoidAsync("eval", "new bootstrap.Modal(document.getElementById('uploadModal')).show()");
+    }
+
+    private void OnFilesSelected(InputFileChangeEventArgs e)
+    {
+        SelectedFiles = e.GetMultipleFiles().ToArray();
+    }
+
+    private async Task UploadFiles()
+    {
+        if (SelectedFiles?.Any() != true) return;
+
+        try
+        {
+            IsUploading = true;
+            UploadProgress = 0;
+
+            for (int i = 0; i < SelectedFiles.Length; i++)
+            {
+                var file = SelectedFiles[i];
+                var success = await FileService.UploadFileAsync(file, CurrentPath!, "web-user");
+                
+                UploadProgress = (int)(((double)(i + 1) / SelectedFiles.Length) * 100);
+                StateHasChanged();
+
+                if (!success)
+                {
+                    ErrorMessage = $"Failed to upload {file.Name}";
+                    break;
+                }
+            }
+
+            if (string.IsNullOrEmpty(ErrorMessage))
+            {
+                // TODO: REmove all evals
+                await JSRuntime.InvokeVoidAsync("eval", "bootstrap.Modal.getInstance(document.getElementById('uploadModal')).hide()");
+                await LoadFiles(CurrentPath!);
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Upload error: {ex.Message}";
+        }
+        finally
+        {
+            IsUploading = false;
+            UploadProgress = 0;
+        }
+    }
+
+    private async Task DownloadFile(string filePath)
+    {
+        await JSRuntime.InvokeVoidAsync("open", $"/api/v1/file/{Uri.EscapeDataString(filePath)}", "_blank");
+    }
+
+    private async Task StreamVideo(string filePath)
+    {
+        await JSRuntime.InvokeVoidAsync("open", $"/api/v1/stream/{Uri.EscapeDataString(filePath)}", "_blank");
+    }
+
+    private async Task ShowRenameModal(FileInfo file)
+    {
+        // Implementation for rename modal
+        await Task.CompletedTask;
+    }
+
+    private async Task ShowDeleteModal(FileInfo file)
+    {
+        // Implementation for delete modal
+        await Task.CompletedTask;
+    }
+
+    private string GetFileIcon(string? mimeType)
+    {
+        return mimeType?.Split('/')[0] switch
+        {
+            "image" => "fa-file-image text-success",
+            "video" => "fa-file-video text-primary", 
+            "audio" => "fa-file-audio text-info",
+            "text" => "fa-file-alt text-secondary",
+            "application" => mimeType switch
+            {
+                var pdf when pdf.Contains("pdf") => "fa-file-pdf text-danger",
+                var word when word.Contains("word") || word.Contains("document") => "fa-file-word text-primary",
+                var excel when excel.Contains("excel") || excel.Contains("sheet") => "fa-file-excel text-success",
+                var archive when archive.Contains("zip") || archive.Contains("rar") || archive.Contains("tar") => "fa-file-archive text-warning",
+                _ => "fa-file text-muted"
+            },
+            _ => "fa-file text-muted"
+        };
+    }
+
+    private string GetFileTypeDisplay(string? mimeType)
+    {
+        if (string.IsNullOrEmpty(mimeType)) return "Unknown";
+        
+        return mimeType.Split('/')[0].ToUpper() switch
+        {
+            "IMAGE" => "Image",
+            "VIDEO" => "Video",
+            "AUDIO" => "Audio", 
+            "TEXT" => "Text",
+            "APPLICATION" => mimeType.Split('/').LastOrDefault()?.ToUpper() ?? "APP",
+            _ => "File"
+        };
+    }
+
+    private bool IsVideoFile(string? mimeType)
+    {
+        return mimeType?.StartsWith("video/") == true;
+    }
+
+    private string FormatFileSize(long bytes)
+    {
+        string[] sizes = { "B", "KB", "MB", "GB", "TB" };
+        double len = bytes;
+        int order = 0;
+        while (len >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            len = len / 1024;
+        }
+        return $"{len:0.##} {sizes[order]}";
+    }
+}

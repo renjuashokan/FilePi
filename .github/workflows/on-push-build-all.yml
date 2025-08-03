@@ -1,4 +1,4 @@
-name: Build Go Server
+name: Build Go Server with Blazor Frontend
 
 on:
   push:
@@ -33,6 +33,11 @@ jobs:
       with:
         go-version: '1.24.1'
         check-latest: true
+
+    - name: Set up .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x'
 
     - name: Set artifact name and development version
       id: set-artifact-props
@@ -70,22 +75,85 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential
 
+    - name: Install LibMan CLI (for client-side libraries)
+      run: dotnet tool install -g Microsoft.Web.LibraryManager.Cli
+
+    - name: Build Blazor WebAssembly Frontend
+      run: |
+        echo "Building Blazor WebAssembly frontend..."
+        cd FilePiWeb
+        
+        # Add LibMan package if not already present
+        if ! dotnet list package | grep -q "Microsoft.Web.LibraryManager.Build"; then
+          dotnet add package Microsoft.Web.LibraryManager.Build
+        fi
+        
+        # Restore client-side libraries
+        if [ -f "libman.json" ]; then
+          libman restore
+        fi
+        
+        # Build and publish Blazor
+        dotnet publish -c Release -o ../temp-publish
+        cd ..
+        
+        # Copy published files to webdeploy directory
+        mkdir -p webdeploy
+        cp -r temp-publish/wwwroot/* webdeploy/
+        rm -rf temp-publish/
+        
+        echo "Blazor frontend built successfully"
+        echo "WebDeploy contents:"
+        ls -la webdeploy/
+
     - name: Build Go binary
       run: |
+        echo "Building Go backend..."
         GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="-X main.Version=${{ steps.set-artifact-props.outputs.version }}" -o filepi
         
-        # Create tarball
+        echo "Go binary built successfully"
+        ls -la filepi
+
+    - name: Verify webdeploy directory
+      run: |
+        if [ ! -d "webdeploy" ] || [ ! -f "webdeploy/index.html" ]; then
+          echo "ERROR: webdeploy directory is missing or incomplete"
+          echo "webdeploy contents:"
+          ls -la webdeploy/ || echo "webdeploy directory does not exist"
+          exit 1
+        fi
+        
+        echo "✅ webdeploy directory verified"
+        echo "Contents:"
+        find webdeploy -type f | head -10
+
+    - name: Create binary tarball
+      run: |
+        # Create tarball with both Go binary and webdeploy
         BINARY_NAME="filepi-${{ steps.set-artifact-props.outputs.build-name }}-linux-${{ matrix.arch }}"
-        cp filepi ${BINARY_NAME}
+        
+        # Create a temporary directory structure
+        mkdir -p ${BINARY_NAME}
+        cp filepi ${BINARY_NAME}/
+        cp -r webdeploy ${BINARY_NAME}/
+        
+        # Create tarball
         tar -czvf ${BINARY_NAME}.tar.gz ${BINARY_NAME}
+        
+        echo "Tarball created: ${BINARY_NAME}.tar.gz"
+        tar -tzvf ${BINARY_NAME}.tar.gz | head -10
 
     - name: Build Debian package
       run: |
+        echo "Building Debian package..."
         chmod +x build-deb.sh
         ./build-deb.sh "${{ steps.set-artifact-props.outputs.deb-version }}" "${{ matrix.arch }}"
         
         # Rename the deb file to include architecture
         mv outputs/filepi_*.deb filepi_${{ steps.set-artifact-props.outputs.build-name }}_${{ matrix.arch }}.deb
+        
+        echo "Debian package created:"
+        ls -la filepi_${{ steps.set-artifact-props.outputs.build-name }}_${{ matrix.arch }}.deb
 
     - name: Upload binary tarball
       uses: actions/upload-artifact@v4
@@ -111,8 +179,24 @@ jobs:
 
     - name: List artifacts
       run: |
-        echo "The following artifacts have been created:"
-        echo "Go binaries:"
-        ls -l all-artifacts/*.tar.gz
-        echo "Debian packages:"
-        ls -l all-artifacts/*.deb
+        echo "## 🎉 Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "The following artifacts have been created:" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📦 Go Binaries (with Blazor WebAssembly UI):" >> $GITHUB_STEP_SUMMARY
+        for file in all-artifacts/*.tar.gz; do
+          if [ -f "$file" ]; then
+            filename=$(basename "$file")
+            size=$(ls -lh "$file" | awk '{print $5}')
+            echo "- $filename ($size)" >> $GITHUB_STEP_SUMMARY
+          fi
+        done
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📦 Debian Packages:" >> $GITHUB_STEP_SUMMARY
+        for file in all-artifacts/*.deb; do
+          if [ -f "$file" ]; then
+            filename=$(basename "$file")
+            size=$(ls -lh "$file" | awk '{print $5}')
+            echo "- $filename ($size)" >> $GITHUB_STEP_SUMMARY
+          fi
+        done

@@ -28,3 +28,6 @@ FilePi
 filepi
 filepi_*
 outputs/
+
+# Blazor deployed files
+webdeploy/

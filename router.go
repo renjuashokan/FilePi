@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -58,6 +59,27 @@ func setupRoutes(fs *FileServer, port string) {
 
 	// Add request logger middleware
 	app.Use(RequestLogger())
+
+	// Serve Blazor WebAssembly static files from webdeploy directory
+	// This should come BEFORE API routes to serve index.html for SPA routing
+	if _, err := os.Stat("./webdeploy"); err == nil {
+		app.Static("/", "./webdeploy")
+		log.Info("Serving Blazor WebAssembly files from ./webdeploy")
+
+		// Handle SPA routing - serve index.html for any non-API routes
+		app.Use(func(c *fiber.Ctx) error {
+			// If the request is for API, continue to API handlers
+			if strings.HasPrefix(c.Path(), "/api") {
+				return c.Next()
+			}
+
+			// If it's not an API request and file doesn't exist, serve index.html
+			// This enables client-side routing in Blazor
+			return c.SendFile("./webdeploy/index.html")
+		})
+	} else {
+		log.Warn("webdeploy directory not found, Blazor UI will not be available")
+	}
 
 	api := app.Group(API_PREFIX)
 
