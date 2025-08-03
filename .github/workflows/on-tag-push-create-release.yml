@@ -31,7 +31,7 @@ jobs:
       id: set-release-name
       run: |
         TAG_NAME="${{ github.ref_name }}"
-        RELEASE_NAME="FilePI Go Server ${TAG_NAME}"
+        RELEASE_NAME="FilePi Server ${TAG_NAME}"
         echo "release-name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
         echo "Release name: ${RELEASE_NAME}"
 
@@ -107,7 +107,7 @@ jobs:
           );
           
           if (filepiArtifacts.length === 0) {
-            core.setFailed('No FilePI artifacts found in the latest build');
+            core.setFailed('No FilePi artifacts found in the latest build');
             return;
           }
           
@@ -201,34 +201,70 @@ jobs:
       run: |
         TAG_NAME="${{ needs.common-vars.outputs.tag-name }}"
         cat > ${{ env.RELEASE_DIR }}/RELEASE_NOTES.md << EOF
-        FilePi is a lightweight network file browser for Raspberry Pi and resource-constrained devices.
-        Browse, stream, and manage files from the [Pi View mobile app](https://github.com/renjuashokan/pi_view) or [PiTV explorer Android TV App](https://github.com/renjuashokan/PiTVExplorer).
+        # 🚀 FilePi Server ${TAG_NAME}
         
-        ## Quick Start
+        FilePi is a lightweight network file browser with a modern web interface for Raspberry Pi and resource-constrained devices.
+        Browse, stream, and manage files from any web browser or the [Pi View mobile app](https://github.com/renjuashokan/pi_view).
+        
+        ## ✨ What's New in This Release
+        
+        - 🌐 **Modern Web Interface**: Blazor WebAssembly frontend with responsive design
+        - 📱 **Mobile-Friendly**: Works seamlessly on desktop, tablet, and mobile devices  
+        - 🎬 **Enhanced Video Gallery**: Grid and list views with thumbnail generation
+        - 📁 **Improved File Management**: Upload, download, create folders, search files
+        - 🎨 **Beautiful UI**: Bootstrap 5 + Font Awesome icons for a polished experience
+        - ⚡ **High Performance**: Optimized for resource-constrained devices
+        
+        ## 🚀 Quick Start
         
         **Prerequisites:** FFmpeg is required (\`sudo apt install ffmpeg\`)
         
-        ### Debian Package (Recommended)
+        ### 📦 Debian Package (Recommended)
         1. Download: \`filepi_${TAG_NAME}_<arch>.deb\`
         2. Install: \`sudo dpkg -i filepi_${TAG_NAME}_<arch>.deb\`
+        3. Access: \`http://[device-ip]:8080\`
         
-        Service starts automatically on port 8080. Access at \`http://[device-ip]:8080\`
+        The service starts automatically and includes both the Go backend and Blazor frontend.
         
-        ### Binary
+        ### 📁 Binary Installation
         1. Download: \`filepi-${TAG_NAME}-linux-<arch>.tar.gz\`
-        2. Extract and run: \`tar -xzf filepi-*.tar.gz && ./filepi-*\`
-        3. Set media directory: \`export FILE_PI_ROOT_DIR=/path/to/your/files\`
+        2. Extract: \`tar -xzf filepi-*.tar.gz\`
+        3. Run: \`cd filepi-*/ && ./filepi\`
+        4. Configure: \`export FILE_PI_ROOT_DIR=/path/to/your/files\`
         
-        ## Documentation
+        ## 🌐 Web Interface Features
         
-        📖 **[Complete Installation Guide](DEBIAN-INSTALL.md)** - Detailed Debian package installation, configuration, and service management
+        - **📂 File Browser**: Navigate directories with breadcrumb navigation
+        - **🔍 Search**: Find files quickly with powerful search
+        - **📤 Upload**: Drag & drop or select multiple files
+        - **🎬 Video Player**: Stream videos with thumbnail previews  
+        - **📱 Responsive**: Works on any device size
+        - **🎨 Modern UI**: Clean, intuitive interface
         
-        📚 **[Full Documentation](README.md)** - Features, API endpoints, configuration options, and development setup
+        ## 📚 Documentation
         
-        ## Access Your Files
-        - **Web Browser:** \`http://[device-ip]:[port]\` (default port 8080)
-        - **Android TV:** [PiTV explorer Android TV App](https://github.com/renjuashokan/PiTVExplorer)
-        - **Mobile:** [Pi View app](https://github.com/renjuashokan/pi_view)
+        📖 **[Installation Guide](DEBIAN-INSTALL.md)** - Detailed setup and configuration
+        
+        📚 **[Full Documentation](README.md)** - Features, API, and development guide
+        
+        ## 🔗 Access Your Files
+        
+        - **🌐 Web Browser**: \`http://[device-ip]:8080\`
+        - **📱 Mobile App**: [Pi View](https://github.com/renjuashokan/pi_view)
+        - **📺 Android TV**: [PiTV Explorer](https://github.com/renjuashokan/PiTVExplorer)
+        
+        ## 🏗️ Architecture
+        
+        - **Backend**: Go server with RESTful API
+        - **Frontend**: Blazor WebAssembly (C#)
+        - **UI Framework**: Bootstrap 5 + Font Awesome
+        - **Deployment**: Single binary + static files
+        
+        ---
+        
+        💡 **New to FilePi?** Check out the [installation guide](DEBIAN-INSTALL.md) for step-by-step setup instructions.
+        
+        🐛 **Found an issue?** Please report it on [GitHub Issues](https://github.com/renjuashokan/FilePi/issues).
         
         EOF
 
@@ -253,19 +289,29 @@ jobs:
 
     - name: Release Summary
       run: |
-        echo "## FilePI Go Server Release Created Successfully! 🎉" >> $GITHUB_STEP_SUMMARY
+        echo "## 🎉 FilePi Server Release Created Successfully!" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Tag:** ${{ needs.common-vars.outputs.tag-name }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Release Name:** ${{ needs.common-vars.outputs.release-name }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Prerelease:** ${{ needs.common-vars.outputs.is-prerelease }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Source Build:** Run #${{ needs.common-vars.outputs.latest-run-id }} from main_go" >> $GITHUB_STEP_SUMMARY
+        echo "**🏷️ Tag:** ${{ needs.common-vars.outputs.tag-name }}" >> $GITHUB_STEP_SUMMARY
+        echo "**📦 Release:** ${{ needs.common-vars.outputs.release-name }}" >> $GITHUB_STEP_SUMMARY
+        echo "**🔖 Type:** ${{ needs.common-vars.outputs.is-prerelease == 'true' && 'Pre-release' || 'Stable Release' }}" >> $GITHUB_STEP_SUMMARY
+        echo "**🔨 Source Build:** Run #${{ needs.common-vars.outputs.latest-run-id }} from main_go" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### Assets:" >> $GITHUB_STEP_SUMMARY
+        echo "### 📦 Release Assets:" >> $GITHUB_STEP_SUMMARY
         for file in ${{ env.RELEASE_DIR }}/*; do
           if [ -f "$file" ] && [[ "$file" != *"RELEASE_NOTES.md" ]]; then
             filename=$(basename "$file")
             size=$(ls -lh "$file" | awk '{print $5}')
-            echo "- $filename ($size)" >> $GITHUB_STEP_SUMMARY
+            if [[ "$filename" == *.tar.gz ]]; then
+              echo "- 🗃️ $filename ($size) - Binary with Web UI" >> $GITHUB_STEP_SUMMARY
+            elif [[ "$filename" == *.deb ]]; then
+              echo "- 📦 $filename ($size) - Debian Package" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
         done
         echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🌟 Key Features:" >> $GITHUB_STEP_SUMMARY
+        echo "- 🌐 Modern Blazor WebAssembly frontend" >> $GITHUB_STEP_SUMMARY
+        echo "- 📱 Responsive design for all devices" >> $GITHUB_STEP_SUMMARY
+        echo "- 🎬 Video streaming with thumbnails" >> $GITHUB_STEP_SUMMARY
+        echo "- 📁 Complete file management" >> $GITHUB_STEP_SUMMARY
+        echo "- ⚡ Optimized for Raspberry Pi" >> $GITHUB_STEP_SUMMARY
