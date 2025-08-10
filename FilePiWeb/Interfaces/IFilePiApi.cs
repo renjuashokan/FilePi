@@ -3,7 +3,6 @@ using Refit;
 
 namespace FilePiWeb.Interfaces;
 
-
 public interface IFilePiApi
 {
     [Get("/api/v1/files")]
