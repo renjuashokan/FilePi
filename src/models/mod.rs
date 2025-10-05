@@ -24,6 +24,7 @@ pub struct FileQuery {
     pub limit: Option<usize>,
     pub sort_by: Option<String>,
     pub order: Option<String>,
+    pub query: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
