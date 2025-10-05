@@ -1,12 +1,17 @@
 use axum::{
     Json,
-    extract::{Query, State},
+    body::Body,
+    extract::{Path, Query, State},
+    http::{StatusCode, header},
+    response::IntoResponse,
 };
 
 use mime_guess::from_path;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::fs::File;
+use tokio_util::io::ReaderStream;
 use tracing::{error, info};
 use walkdir::WalkDir;
 
@@ -290,4 +295,123 @@ pub async fn search(
     }
 
     result_handler::format_result(&mut matching_files, &params)
+}
+
+pub async fn serve_file(
+    State(config): State<Arc<Config>>,
+    Path(file_path): Path<String>,
+) -> Result<impl IntoResponse, AppError> {
+    let file_path = file_path.trim_start_matches('/');
+    let abs_path = PathBuf::from(&config.root_dir).join(file_path);
+
+    // Security: prevent directory traversal
+    if !abs_path.starts_with(&config.root_dir) {
+        return Err(AppError::BadRequest("Invalid path".to_string()));
+    }
+
+    // Check if file exists and is not a directory
+    if !abs_path.exists() {
+        return Err(AppError::NotFound("File not found".to_string()));
+    }
+
+    if abs_path.is_dir() {
+        return Err(AppError::BadRequest("Path is a directory".to_string()));
+    }
+
+    info!("Serving file: {:?}", abs_path);
+
+    // Open the file
+    let file = File::open(&abs_path).await.map_err(|e| {
+        error!("Failed to open file: {}", e);
+        AppError::InternalError(format!("Failed to open file: {}", e))
+    })?;
+
+    // Get file metadata for content length
+    let metadata = file.metadata().await.map_err(|e| {
+        error!("Failed to read file metadata: {}", e);
+        AppError::InternalError(format!("Failed to read metadata: {}", e))
+    })?;
+
+    // Guess MIME type from file extension
+    let mime_type = from_path(&abs_path).first_or_octet_stream().to_string();
+
+    // Get filename for Content-Disposition header
+    let file_name = abs_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("download");
+
+    // Create a stream from the file
+    let stream = ReaderStream::new(file);
+    let body = Body::from_stream(stream);
+
+    // Build response with appropriate headers
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, mime_type),
+            (header::CONTENT_LENGTH, metadata.len().to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{}\"", file_name),
+            ),
+        ],
+        body,
+    ))
+}
+
+// Stream file (for video streaming)
+pub async fn stream_file(
+    State(config): State<Arc<Config>>,
+    Path(file_path): Path<String>,
+) -> Result<impl IntoResponse, AppError> {
+    let file_path = file_path.trim_start_matches('/');
+    let abs_path = PathBuf::from(&config.root_dir).join(file_path);
+
+    // Security: prevent directory traversal
+    if !abs_path.starts_with(&config.root_dir) {
+        return Err(AppError::BadRequest("Invalid path".to_string()));
+    }
+
+    // Check if file exists and is not a directory
+    if !abs_path.exists() {
+        return Err(AppError::NotFound("File not found".to_string()));
+    }
+
+    if abs_path.is_dir() {
+        return Err(AppError::BadRequest("Path is a directory".to_string()));
+    }
+
+    info!("Streaming file: {:?}", abs_path);
+
+    // Open the file
+    let file = File::open(&abs_path).await.map_err(|e| {
+        error!("Failed to open file: {}", e);
+        AppError::InternalError(format!("Failed to open file: {}", e))
+    })?;
+
+    // Get file metadata
+    let metadata = file.metadata().await.map_err(|e| {
+        error!("Failed to read file metadata: {}", e);
+        AppError::InternalError(format!("Failed to read metadata: {}", e))
+    })?;
+
+    // Guess MIME type from file extension
+    let mime_type = from_path(&abs_path).first_or_octet_stream().to_string();
+
+    // Create a stream from the file
+    let stream = ReaderStream::new(file);
+    let body = Body::from_stream(stream);
+
+    // Build response with streaming headers (inline, not attachment)
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, mime_type),
+            (header::CONTENT_LENGTH, metadata.len().to_string()),
+            (header::ACCEPT_RANGES, "bytes".to_string()),
+            (header::CACHE_CONTROL, "no-cache".to_string()),
+        ],
+        body,
+    ))
 }
