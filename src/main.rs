@@ -48,6 +48,7 @@ async fn main() {
         .route("/search", get(files::search))
         .route("/file/{*wildcard}", get(files::serve_file))
         .route("/stream/{*wildcard}", get(files::stream_file))
+        .route("/thumbnail/{*wildcard}", get(files::get_thumbnail))
         .with_state(shared_config.clone());
 
     // Build main app with all routes and middleware

@@ -1,10 +1,11 @@
-use std::env;
+use std::{env, path::PathBuf};
 
 #[derive(Clone, Debug)]
 pub struct Config {
     pub root_dir: String,
     pub port: u16,
     pub log_level: String,
+    pub cache_dir: PathBuf,
 }
 
 impl Config {
@@ -12,6 +13,7 @@ impl Config {
         let _ = dotenvy::dotenv;
 
         let root_dir = env::var("FILE_PI_ROOT_DIR").unwrap_or_else(|_| ".".to_string());
+        let cache_dir = PathBuf::from(&root_dir).join(".cache");
 
         let port = env::var("FILE_PI_PORT")
             .unwrap_or_else(|_| "8080".to_string())
@@ -25,6 +27,7 @@ impl Config {
             root_dir,
             port,
             log_level,
+            cache_dir,
         })
     }
 }

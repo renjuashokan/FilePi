@@ -15,9 +15,9 @@ use tokio_util::io::ReaderStream;
 use tracing::{error, info};
 use walkdir::WalkDir;
 
-use crate::config::Config;
-use crate::handlers::{app_error::AppError, result_handler};
+use crate::handlers::{app_error::AppError, result_handler, thumbnail_manager};
 use crate::models::{FileInfo, FileQuery, FilesResponse};
+use crate::{config::Config, handlers::thumbnail_manager::ThumbnailError};
 
 // Handler for GET /api/v1/files
 pub async fn get_files(
@@ -410,6 +410,54 @@ pub async fn stream_file(
             (header::CONTENT_TYPE, mime_type),
             (header::CONTENT_LENGTH, metadata.len().to_string()),
             (header::ACCEPT_RANGES, "bytes".to_string()),
+            (header::CACHE_CONTROL, "no-cache".to_string()),
+        ],
+        body,
+    ))
+}
+
+pub async fn get_thumbnail(
+    State(config): State<Arc<Config>>,
+    Path(file_path): Path<String>,
+) -> Result<impl IntoResponse, AppError> {
+    let file_path = file_path.trim_start_matches('/');
+    let abs_path = PathBuf::from(&config.root_dir).join(file_path);
+
+    // Security: prevent directory traversal
+    if !abs_path.starts_with(&config.root_dir) {
+        return Err(AppError::BadRequest("Invalid path".to_string()));
+    }
+
+    let thumbnail_path = thumbnail_manager::get_thumbnail(State(config), &abs_path)
+        .await
+        .map_err(|e| match e {
+            ThumbnailError::InvalidInput => {
+                AppError::BadRequest("Invalid file for thumbnail generation".to_string())
+            }
+            ThumbnailError::InternalError(msg) => AppError::InternalError(msg),
+        })?;
+
+    // Now serve the thumbnail file
+    info!("Serving thumbnail: {:?}", thumbnail_path);
+
+    let file = File::open(&thumbnail_path).await.map_err(|e| {
+        error!("Failed to open thumbnail: {}", e);
+        AppError::InternalError(format!("Failed to open thumbnail: {}", e))
+    })?;
+
+    let metadata = file.metadata().await.map_err(|e| {
+        error!("Failed to read thumbnail metadata: {}", e);
+        AppError::InternalError(format!("Failed to read metadata: {}", e))
+    })?;
+
+    let stream = ReaderStream::new(file);
+    let body = Body::from_stream(stream);
+
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "image/jpeg".to_string()),
+            (header::CONTENT_LENGTH, metadata.len().to_string()),
             (header::CACHE_CONTROL, "no-cache".to_string()),
         ],
         body,
