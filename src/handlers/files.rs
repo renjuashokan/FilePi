@@ -1,47 +1,25 @@
 use axum::{
     Json,
     extract::{Query, State},
-    http::StatusCode,
-    response::{IntoResponse, Response},
 };
 
+use mime_guess::from_path;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{error, info};
+use walkdir::WalkDir;
 
 use crate::config::Config;
-use crate::models::{ErrorResponse, FileInfo, FileQuery, FilesResponse};
-
-// Custom error type for better error handling
-pub enum AppError {
-    NotFound(String),
-    InternalError(String),
-    BadRequest(String),
-}
-
-// Convert AppError to HTTP response
-impl IntoResponse for AppError {
-    fn into_response(self) -> Response {
-        let (status, message) = match self {
-            AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
-            AppError::InternalError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
-            AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
-        };
-
-        let body = Json(ErrorResponse { error: message });
-        (status, body).into_response()
-    }
-}
+use crate::handlers::{app_error::AppError, result_handler};
+use crate::models::{FileInfo, FileQuery, FilesResponse};
 
 // Handler for GET /api/v1/files
 pub async fn get_files(
     State(config): State<Arc<Config>>,
     Query(params): Query<FileQuery>,
 ) -> Result<Json<FilesResponse>, AppError> {
-    let path = params.path.unwrap_or_default();
-    let skip = params.skip.unwrap_or(0);
-    let limit = params.limit.unwrap_or(25);
+    let path = params.path.as_deref().unwrap_or_default();
 
     info!("Getting files from path: {}", path);
 
@@ -107,42 +85,108 @@ pub async fn get_files(
         });
     }
 
-    let total = files.len();
+    result_handler::format_result(&mut files, &params)
+}
 
-    // Apply sorting if requested
-    if let Some(sort_by) = params.sort_by {
-        let order = params.order.as_deref().unwrap_or("asc");
+// recursivley get all videos present in path
+pub async fn get_videos(
+    State(config): State<Arc<Config>>,
+    Query(params): Query<FileQuery>,
+) -> Result<Json<FilesResponse>, AppError> {
+    let path = params.path.as_deref().unwrap_or_default();
 
-        match sort_by.as_str() {
-            "name" => {
-                files.sort_by(|a, b| {
-                    if order == "desc" {
-                        b.name.cmp(&a.name)
-                    } else {
-                        a.name.cmp(&b.name)
-                    }
-                });
-            }
-            "size" => {
-                files.sort_by(|a, b| {
-                    if order == "desc" {
-                        b.size.cmp(&a.size)
-                    } else {
-                        a.size.cmp(&b.size)
-                    }
-                });
-            }
-            _ => {}
-        }
+    info!("Getting videos from path: {}", path);
+
+    // Construct the full absolute path
+    let full_path = PathBuf::from(&config.root_dir).join(&path);
+
+    // Validate the path exists
+    if !full_path.exists() {
+        error!("Path not found: {:?}", full_path);
+        return Err(AppError::NotFound(format!("Path not found: {}", path)));
     }
 
-    // Apply pagination
-    let paginated_files: Vec<FileInfo> = files.into_iter().skip(skip).take(limit).collect();
+    // Must be a directory to walk
+    if !full_path.is_dir() {
+        return Err(AppError::BadRequest("Path is not a directory".to_string()));
+    }
 
-    Ok(Json(FilesResponse {
-        files: paginated_files,
-        total,
-        skip,
-        limit,
-    }))
+    let mut video_files: Vec<FileInfo> = Vec::new();
+
+    // Walk the directory recursively
+    for entry in WalkDir::new(&full_path) {
+        let entry = entry.map_err(|e| {
+            error!("Error walking directory: {}", e);
+            AppError::InternalError(format!("Failed to traverse directory: {}", e))
+        })?;
+
+        let metadata = entry.metadata().map_err(|e| {
+            error!("Error reading metadata for {:?}: {}", entry.path(), e);
+            AppError::InternalError(format!("Failed to read file metadata: {}", e))
+        })?;
+
+        // Skip directories
+        if metadata.is_dir() {
+            continue;
+        }
+
+        let file_path = entry.path();
+        let file_name = match file_path.file_name() {
+            Some(name) => name.to_string_lossy().to_string(),
+            None => continue, // Skip if no filename (shouldn't happen normally)
+        };
+
+        // Skip hidden files
+        if file_name.starts_with('.') {
+            continue;
+        }
+
+        // Guess MIME type from file extension
+        let mime_type = from_path(file_path);
+        if !mime_type
+            .first_or_octet_stream()
+            .essence_str()
+            .starts_with("video/")
+        {
+            continue;
+        }
+
+        // Compute relative path from the requested `path` (not from root_dir)
+        // We want: requested_path + relative_part
+        let relative_part = match file_path.strip_prefix(&full_path) {
+            Ok(rel) => rel,
+            Err(e) => {
+                error!("Failed to compute relative path: {}", e);
+                continue;
+            }
+        };
+
+        let relative_path = if relative_part.as_os_str().is_empty() {
+            file_name.clone()
+        } else {
+            // Use forward slashes for URL-friendly paths
+            let rel_str = relative_part.to_string_lossy().replace('\\', "/");
+            if path.is_empty() {
+                rel_str
+            } else {
+                format!("{}/{}", path, rel_str)
+            }
+        };
+
+        let modified = metadata.modified().ok().and_then(|time| {
+            time.duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .map(|d| d.as_secs().to_string())
+        });
+
+        video_files.push(FileInfo {
+            name: file_name,
+            path: relative_path,
+            is_dir: false,
+            size: metadata.len(),
+            modified,
+        });
+    }
+
+    result_handler::format_result(&mut video_files, &params)
 }

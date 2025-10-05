@@ -44,6 +44,7 @@ async fn main() {
     // Build API routes
     let api_routes = Router::new()
         .route("/files", get(files::get_files))
+        .route("/videos", get(files::get_videos))
         .with_state(shared_config.clone());
 
     // Build main app with all routes and middleware

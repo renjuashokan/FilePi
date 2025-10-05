@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FileInfo {
     pub name: String,
     pub path: String,
@@ -17,7 +17,7 @@ pub struct FilesResponse {
     pub limit: usize,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct FileQuery {
     pub path: Option<String>,
     pub skip: Option<usize>,
