@@ -19,7 +19,7 @@ use crate::config::Config;
 use crate::handlers::thumbnail_manager::ThumbnailError;
 use crate::handlers::{app_error::AppError, result_handler};
 use crate::models::file_info::FileInfo;
-use crate::models::{FileQuery, FilesResponse};
+use crate::models::{CreateFolderRequest, CreateFolderResponse, FileQuery, FilesResponse};
 
 // Handler for GET /api/v1/files
 pub async fn get_files(
@@ -443,4 +443,62 @@ pub async fn get_thumbnail(
         ],
         body,
     ))
+}
+
+pub async fn create_folder(
+    State(config): State<Arc<Config>>,
+    Json(params): Json<CreateFolderRequest>,
+) -> Result<Json<CreateFolderResponse>, AppError> {
+    let path = params.path.as_deref().unwrap_or_default();
+    let folder_name = params.foldername.as_deref().unwrap_or_default();
+
+    if folder_name.is_empty() {
+        return Err(AppError::NotFound(format!(
+            "Folder name should not be empty"
+        )));
+    }
+
+    // Construct the full path
+    let full_path = PathBuf::from(&config.root_dir).join(&path);
+
+    // Validate the path exists
+    if !full_path.exists() {
+        error!("Path not found: {:?}", full_path);
+        return Err(AppError::NotFound(format!("Path not found: {}", path)));
+    }
+
+    // Canonicalize to resolve . and .. and get the clean absolute path
+    let full_path = full_path.canonicalize().map_err(|e| {
+        error!("Failed to canonicalize path {:?}: {}", full_path, e);
+        AppError::NotFound(format!("Path not found: {}", path))
+    })?;
+
+    // Security: ensure the canonicalized path is still within root_dir
+    let canonical_root = PathBuf::from(&config.root_dir)
+        .canonicalize()
+        .map_err(|e| {
+            error!("Failed to canonicalize root directory: {}", e);
+            AppError::InternalError("Invalid root directory configuration".to_string())
+        })?;
+
+    if !full_path.starts_with(&canonical_root) {
+        return Err(AppError::BadRequest(
+            "Invalid path: outside root directory".to_string(),
+        ));
+    }
+
+    let dir_path = PathBuf::from(&full_path).join(&folder_name);
+
+    if dir_path.exists() {
+        return Err(AppError::BadRequest("Directory already exist".to_string()));
+    }
+
+    let _res = fs::create_dir_all(dir_path).map_err(|e| {
+        error!("Error creating directory: {}", e);
+        AppError::InternalError(format!("Failed to create directory: {}", e))
+    })?;
+
+    Ok(Json(CreateFolderResponse {
+        message: String::from("Folder created successfully"),
+    }))
 }

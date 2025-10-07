@@ -26,3 +26,14 @@ pub struct FileQuery {
 pub struct ErrorResponse {
     pub error: String,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct CreateFolderRequest {
+    pub path: Option<String>,
+    pub foldername: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateFolderResponse {
+    pub message: String,
+}

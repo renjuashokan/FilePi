@@ -3,7 +3,10 @@ mod handlers;
 mod middleware;
 mod models;
 
-use axum::{Router, middleware as axum_middleware, routing::get};
+use axum::{
+    Router, middleware as axum_middleware,
+    routing::{get, post},
+};
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -49,6 +52,7 @@ async fn main() {
         .route("/file/{*wildcard}", get(files::serve_file))
         .route("/stream/{*wildcard}", get(files::stream_file))
         .route("/thumbnail/{*wildcard}", get(files::get_thumbnail))
+        .route("/createfolder", post(files::create_folder))
         .with_state(shared_config.clone());
 
     // Build main app with all routes and middleware
