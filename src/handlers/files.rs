@@ -15,9 +15,11 @@ use tokio_util::io::ReaderStream;
 use tracing::{error, info};
 use walkdir::WalkDir;
 
-use crate::handlers::{app_error::AppError, result_handler, thumbnail_manager};
-use crate::models::{FileInfo, FileQuery, FilesResponse};
-use crate::{config::Config, handlers::thumbnail_manager::ThumbnailError};
+use crate::config::Config;
+use crate::handlers::thumbnail_manager::ThumbnailError;
+use crate::handlers::{app_error::AppError, result_handler};
+use crate::models::file_info::FileInfo;
+use crate::models::{FileQuery, FilesResponse};
 
 // Handler for GET /api/v1/files
 pub async fn get_files(
@@ -25,6 +27,7 @@ pub async fn get_files(
     Query(params): Query<FileQuery>,
 ) -> Result<Json<FilesResponse>, AppError> {
     let path = params.path.as_deref().unwrap_or_default();
+    let skip_hidden = params.skip_hidden;
 
     info!("Getting files from path: {}", path);
 
@@ -35,6 +38,26 @@ pub async fn get_files(
     if !full_path.exists() {
         error!("Path not found: {:?}", full_path);
         return Err(AppError::NotFound(format!("Path not found: {}", path)));
+    }
+
+    // Canonicalize to resolve . and .. and get the clean absolute path
+    let full_path = full_path.canonicalize().map_err(|e| {
+        error!("Failed to canonicalize path {:?}: {}", full_path, e);
+        AppError::NotFound(format!("Path not found: {}", path))
+    })?;
+
+    // Security: ensure the canonicalized path is still within root_dir
+    let canonical_root = PathBuf::from(&config.root_dir)
+        .canonicalize()
+        .map_err(|e| {
+            error!("Failed to canonicalize root directory: {}", e);
+            AppError::InternalError("Invalid root directory configuration".to_string())
+        })?;
+
+    if !full_path.starts_with(&canonical_root) {
+        return Err(AppError::BadRequest(
+            "Invalid path: outside root directory".to_string(),
+        ));
     }
 
     // Check if it's a directory
@@ -57,37 +80,20 @@ pub async fn get_files(
             AppError::InternalError(format!("Failed to read entry: {}", e))
         })?;
 
-        let metadata = entry.metadata().map_err(|e| {
-            error!("Error reading metadata: {}", e);
-            AppError::InternalError(format!("Failed to read metadata: {}", e))
-        })?;
-
         let file_name = entry.file_name().to_string_lossy().to_string();
 
         // Skip hidden files (starting with .)
-        if file_name.starts_with('.') {
+        if skip_hidden && file_name.starts_with('.') {
             continue;
         }
+        // Get the absolute path of the entry
+        let entry_path = entry.path();
 
-        let relative_path = if path.is_empty() {
-            file_name.clone()
-        } else {
-            format!("{}/{}", path, file_name)
-        };
-
-        let modified = metadata.modified().ok().and_then(|time| {
-            time.duration_since(std::time::UNIX_EPOCH)
-                .ok()
-                .map(|d| d.as_secs().to_string())
-        });
-
-        files.push(FileInfo {
-            name: file_name,
-            path: relative_path,
-            is_dir: metadata.is_dir(),
-            size: metadata.len(),
-            modified,
-        });
+        // Create FileInfo with absolute path and current directory context
+        files.push(FileInfo::from_path(&entry_path, &full_path).map_err(|e| {
+            error!("Error creating FileInfo: {}", e);
+            AppError::InternalError(format!("Failed to read file info: {}", e))
+        })?);
     }
 
     result_handler::format_result(&mut files, &params)
@@ -99,11 +105,32 @@ pub async fn get_videos(
     Query(params): Query<FileQuery>,
 ) -> Result<Json<FilesResponse>, AppError> {
     let path = params.path.as_deref().unwrap_or_default();
+    let skip_hidden = params.skip_hidden;
 
     info!("Getting videos from path: {}", path);
 
     // Construct the full absolute path
     let full_path = PathBuf::from(&config.root_dir).join(&path);
+
+    // Canonicalize to resolve . and .. and get the clean absolute path
+    let full_path = full_path.canonicalize().map_err(|e| {
+        error!("Failed to canonicalize path {:?}: {}", full_path, e);
+        AppError::NotFound(format!("Path not found: {}", path))
+    })?;
+
+    // Security: ensure the canonicalized path is still within root_dir
+    let canonical_root = PathBuf::from(&config.root_dir)
+        .canonicalize()
+        .map_err(|e| {
+            error!("Failed to canonicalize root directory: {}", e);
+            AppError::InternalError("Invalid root directory configuration".to_string())
+        })?;
+
+    if !full_path.starts_with(&canonical_root) {
+        return Err(AppError::BadRequest(
+            "Invalid path: outside root directory".to_string(),
+        ));
+    }
 
     // Validate the path exists
     if !full_path.exists() {
@@ -142,7 +169,7 @@ pub async fn get_videos(
         };
 
         // Skip hidden files
-        if file_name.starts_with('.') {
+        if skip_hidden && file_name.starts_with('.') {
             continue;
         }
 
@@ -156,41 +183,7 @@ pub async fn get_videos(
             continue;
         }
 
-        // Compute relative path from the requested `path` (not from root_dir)
-        // We want: requested_path + relative_part
-        let relative_part = match file_path.strip_prefix(&full_path) {
-            Ok(rel) => rel,
-            Err(e) => {
-                error!("Failed to compute relative path: {}", e);
-                continue;
-            }
-        };
-
-        let relative_path = if relative_part.as_os_str().is_empty() {
-            file_name.clone()
-        } else {
-            // Use forward slashes for URL-friendly paths
-            let rel_str = relative_part.to_string_lossy().replace('\\', "/");
-            if path.is_empty() {
-                rel_str
-            } else {
-                format!("{}/{}", path, rel_str)
-            }
-        };
-
-        let modified = metadata.modified().ok().and_then(|time| {
-            time.duration_since(std::time::UNIX_EPOCH)
-                .ok()
-                .map(|d| d.as_secs().to_string())
-        });
-
-        video_files.push(FileInfo {
-            name: file_name,
-            path: relative_path,
-            is_dir: false,
-            size: metadata.len(),
-            modified,
-        });
+        video_files.push(FileInfo::from_path(&file_path, &full_path).unwrap());
     }
 
     result_handler::format_result(&mut video_files, &params)
@@ -202,6 +195,7 @@ pub async fn search(
 ) -> Result<Json<FilesResponse>, AppError> {
     let path = params.path.as_deref().unwrap_or_default();
     let query = params.query.as_deref().unwrap_or_default().to_lowercase();
+    let skip_hidden = params.skip_hidden;
 
     if query.is_empty() {
         error!("Search query is needed!");
@@ -212,6 +206,26 @@ pub async fn search(
 
     // Construct the full absolute path
     let full_path = PathBuf::from(&config.root_dir).join(&path);
+
+    // Canonicalize to resolve . and .. and get the clean absolute path
+    let full_path = full_path.canonicalize().map_err(|e| {
+        error!("Failed to canonicalize path {:?}: {}", full_path, e);
+        AppError::NotFound(format!("Path not found: {}", path))
+    })?;
+
+    // Security: ensure the canonicalized path is still within root_dir
+    let canonical_root = PathBuf::from(&config.root_dir)
+        .canonicalize()
+        .map_err(|e| {
+            error!("Failed to canonicalize root directory: {}", e);
+            AppError::InternalError("Invalid root directory configuration".to_string())
+        })?;
+
+    if !full_path.starts_with(&canonical_root) {
+        return Err(AppError::BadRequest(
+            "Invalid path: outside root directory".to_string(),
+        ));
+    }
 
     // Validate the path exists
     if !full_path.exists() {
@@ -249,7 +263,7 @@ pub async fn search(
         };
 
         // Skip hidden files
-        if file_name.starts_with('.') {
+        if skip_hidden && file_name.starts_with('.') {
             continue;
         }
 
@@ -257,41 +271,7 @@ pub async fn search(
             continue;
         }
 
-        // Compute relative path from the requested `path` (not from root_dir)
-        // We want: requested_path + relative_part
-        let relative_part = match file_path.strip_prefix(&full_path) {
-            Ok(rel) => rel,
-            Err(e) => {
-                error!("Failed to compute relative path: {}", e);
-                continue;
-            }
-        };
-
-        let relative_path = if relative_part.as_os_str().is_empty() {
-            file_name.clone()
-        } else {
-            // Use forward slashes for URL-friendly paths
-            let rel_str = relative_part.to_string_lossy().replace('\\', "/");
-            if path.is_empty() {
-                rel_str
-            } else {
-                format!("{}/{}", path, rel_str)
-            }
-        };
-
-        let modified = metadata.modified().ok().and_then(|time| {
-            time.duration_since(std::time::UNIX_EPOCH)
-                .ok()
-                .map(|d| d.as_secs().to_string())
-        });
-
-        matching_files.push(FileInfo {
-            name: file_name,
-            path: relative_path,
-            is_dir: false,
-            size: metadata.len(),
-            modified,
-        });
+        matching_files.push(FileInfo::from_path(&file_path, &path).unwrap());
     }
 
     result_handler::format_result(&mut matching_files, &params)
@@ -428,14 +408,15 @@ pub async fn get_thumbnail(
         return Err(AppError::BadRequest("Invalid path".to_string()));
     }
 
-    let thumbnail_path = thumbnail_manager::get_thumbnail(State(config), &abs_path)
-        .await
-        .map_err(|e| match e {
-            ThumbnailError::InvalidInput => {
-                AppError::BadRequest("Invalid file for thumbnail generation".to_string())
-            }
-            ThumbnailError::InternalError(msg) => AppError::InternalError(msg),
-        })?;
+    let thumbnail_path =
+        crate::handlers::thumbnail_manager::get_thumbnail(State(config), &abs_path)
+            .await
+            .map_err(|e| match e {
+                ThumbnailError::InvalidInput => {
+                    AppError::BadRequest("Invalid file for thumbnail generation".to_string())
+                }
+                ThumbnailError::InternalError(msg) => AppError::InternalError(msg),
+            })?;
 
     // Now serve the thumbnail file
     info!("Serving thumbnail: {:?}", thumbnail_path);

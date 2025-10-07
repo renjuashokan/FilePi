@@ -1,18 +1,11 @@
+pub mod file_info;
+use crate::models::file_info::FileInfo;
 use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct FileInfo {
-    pub name: String,
-    pub path: String,
-    pub is_dir: bool,
-    pub size: u64,
-    pub modified: Option<String>,
-}
 
 #[derive(Debug, Serialize)]
 pub struct FilesResponse {
     pub files: Vec<FileInfo>,
-    pub total: usize,
+    pub total_files: usize,
     pub skip: usize,
     pub limit: usize,
 }
@@ -25,6 +18,8 @@ pub struct FileQuery {
     pub sort_by: Option<String>,
     pub order: Option<String>,
     pub query: Option<String>,
+    #[serde(default)]
+    pub skip_hidden: bool,
 }
 
 #[derive(Debug, Serialize)]
