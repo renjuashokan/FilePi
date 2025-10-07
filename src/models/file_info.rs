@@ -34,10 +34,12 @@ impl FileInfo {
 
         let full_name = String::from(path.to_str().unwrap());
 
-        let size = if metadata.is_file() {
-            metadata.len()
-        } else {
-            0
+        let size = match get_size(path) {
+            Ok(size) => size,
+            Err(e) => {
+                eprintln!("Error getting directory size: {}", e);
+                return Err(e); // or handle error appropriately
+            }
         };
 
         let is_directory = metadata.is_dir();
@@ -95,4 +97,31 @@ fn get_file_owner(_path: &Path) -> Option<String> {
     // Windows doesn't have the same concept of file ownership
     // You could implement Windows-specific logic here if needed
     None
+}
+
+fn get_size<P: AsRef<Path>>(path: P) -> std::io::Result<u64> {
+    let mut total_size = 0;
+    let path = path.as_ref();
+
+    // If it's a file, return its size
+    if path.is_file() {
+        let metadata = fs::metadata(path)?;
+        return Ok(metadata.len());
+    }
+
+    // If it's a directory, traverse recursively
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+
+        if entry_path.is_file() {
+            let metadata = entry.metadata()?;
+            total_size += metadata.len();
+        } else if entry_path.is_dir() {
+            total_size += get_size(entry_path)?;
+        }
+        // Skip symlinks, devices, etc.
+    }
+
+    Ok(total_size)
 }
