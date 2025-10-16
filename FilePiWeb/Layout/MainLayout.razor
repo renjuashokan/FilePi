@@ -1,0 +1,30 @@
+﻿@namespace FilePiWeb.Shared
+@inherits LayoutComponentBase
+
+<div class="page">
+    <div class="sidebar">
+        <NavMenu />
+    </div>
+
+    <main>
+        <div class="top-row px-4">
+            <div class="d-flex justify-content-between align-items-center">
+                <h1 class="text-primary">
+                    <i class="fa-brands fa-raspberry-pi"></i> FilePi
+                </h1>
+                <div class="text-muted">
+                    <i class="bi bi-server"></i> Network File Browser
+                </div>
+            </div>
+        </div>
+
+        <article class="content px-4">
+            @Body
+        </article>
+    </main>
+</div>
+
+@code {
+    // [Parameter]
+    // public RenderFragment Body { get; set; }
+}
