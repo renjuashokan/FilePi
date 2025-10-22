@@ -60,6 +60,7 @@ async fn main() {
         .route("/stream/{*wildcard}", get(files::stream_file))
         .route("/thumbnail/{*wildcard}", get(files::get_thumbnail))
         .route("/createfolder", post(files::create_folder))
+        .route("/uploadfile", post(files::upload_file))
         .with_state(shared_config.clone());
 
     // Check if webdeploy directory exists

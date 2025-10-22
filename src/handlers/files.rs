@@ -6,8 +6,10 @@ use axum::{
     response::IntoResponse,
 };
 
+use axum_typed_multipart::TypedMultipart;
 use mime_guess::from_path;
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::File;
@@ -16,10 +18,13 @@ use tracing::{error, info};
 use walkdir::WalkDir;
 
 use crate::config::Config;
+use crate::handlers::hash_utilities::compute_file_sha512;
 use crate::handlers::thumbnail_manager::ThumbnailError;
 use crate::handlers::{app_error::AppError, result_handler};
 use crate::models::file_info::FileInfo;
-use crate::models::{CreateFolderRequest, CreateFolderResponse, FileQuery, FilesResponse};
+use crate::models::{
+    CreateFolderRequest, CreateFolderResponse, FileQuery, FilesResponse, UploadForm,
+};
 
 // Handler for GET /api/v1/files
 pub async fn get_files(
@@ -500,5 +505,167 @@ pub async fn create_folder(
 
     Ok(Json(CreateFolderResponse {
         message: String::from("Folder created successfully"),
+    }))
+}
+
+pub async fn upload_file(
+    State(config): State<Arc<Config>>,
+    TypedMultipart(form): TypedMultipart<UploadForm>,
+) -> Result<Json<crate::models::UploadResponse>, AppError> {
+    info!("Starting file upload process");
+
+    let location = form.location.trim();
+    let user = form.user.trim();
+    let client_sha512 = form.sha512.as_ref().map(|h| h.trim().to_lowercase());
+
+    info!(
+        "Upload parameters - location: {}, user: {}, sha512: {:?}",
+        location,
+        user,
+        client_sha512.as_ref().map(|h| &h[..16])
+    ); // Log only first 16 chars
+
+    if location.is_empty() || user.is_empty() {
+        return Err(AppError::BadRequest(
+            "Missing required fields: location or user".to_string(),
+        ));
+    }
+
+    // Get filename from the uploaded file
+    let filename = form
+        .file
+        .metadata
+        .file_name
+        .clone()
+        .unwrap_or_else(|| "unnamed".to_string());
+
+    info!(
+        "Received file: {} - Size: {}",
+        filename,
+        form.file.contents.len()
+    );
+
+    // Construct the full path for upload location
+    let upload_dir = PathBuf::from(&config.root_dir).join(location);
+
+    // Canonicalize and validate the upload directory
+    let upload_dir = if upload_dir.exists() {
+        upload_dir.canonicalize().map_err(|e| {
+            error!("Failed to canonicalize upload path: {}", e);
+            AppError::BadRequest("Invalid upload location".to_string())
+        })?
+    } else {
+        // Create the directory if it doesn't exist
+        fs::create_dir_all(&upload_dir).map_err(|e| {
+            error!("Failed to create upload directory: {}", e);
+            AppError::InternalError(format!("Failed to create directory: {}", e))
+        })?;
+        upload_dir.canonicalize().map_err(|e| {
+            error!("Failed to canonicalize upload path: {}", e);
+            AppError::BadRequest("Invalid upload location".to_string())
+        })?
+    };
+
+    // Security: ensure the upload path is within root_dir
+    let canonical_root = PathBuf::from(&config.root_dir)
+        .canonicalize()
+        .map_err(|e| {
+            error!("Failed to canonicalize root directory: {}", e);
+            AppError::InternalError("Invalid root directory configuration".to_string())
+        })?;
+
+    if !upload_dir.starts_with(&canonical_root) {
+        return Err(AppError::BadRequest(
+            "Invalid upload path: outside root directory".to_string(),
+        ));
+    }
+
+    // Full path for the file
+    let file_path = upload_dir.join(&filename);
+
+    // Check if file already exists and SHA-512 hash is provided
+    if file_path.exists() {
+        if let Some(client_hash) = client_sha512 {
+            info!("File already exists, checking SHA-512 hash for deduplication");
+
+            // Compute SHA-512 hash of existing file
+            let existing_hash = compute_file_sha512(&file_path).map_err(|e| {
+                error!("Failed to compute SHA-512 hash of existing file: {}", e);
+                AppError::InternalError(format!("Failed to compute file hash: {}", e))
+            })?;
+
+            info!(
+                "Client SHA-512: {}..., Existing file SHA-512: {}...",
+                &client_hash[..16],
+                &existing_hash[..16]
+            );
+
+            // If hashes match, skip upload
+            if client_hash == existing_hash {
+                info!("SHA-512 match - skipping upload for file: {}", filename);
+
+                let relative_path = file_path
+                    .strip_prefix(&canonical_root)
+                    .unwrap_or(&file_path)
+                    .to_string_lossy()
+                    .to_string();
+
+                return Ok(Json(crate::models::UploadResponse {
+                    message: "File already exists with identical content, upload skipped"
+                        .to_string(),
+                    filename,
+                    location: relative_path,
+                    uploaded_by: user.to_string(),
+                    skipped: true,
+                    sha512: Some(existing_hash),
+                }));
+            } else {
+                info!("SHA-512 mismatch - file will be replaced");
+            }
+        } else {
+            info!("No SHA-512 provided - file will be replaced");
+        }
+    }
+
+    info!("Saving file to location: {:?}", file_path);
+
+    // Write the file (will overwrite if exists)
+    let mut file = std::fs::File::create(&file_path).map_err(|e| {
+        error!("Failed to create file: {}", e);
+        AppError::InternalError(format!("Failed to create file: {}", e))
+    })?;
+
+    file.write_all(&form.file.contents).map_err(|e| {
+        error!("Failed to write file: {}", e);
+        AppError::InternalError(format!("Failed to write file: {}", e))
+    })?;
+
+    info!(
+        "File uploaded successfully: {} to path: {:?}",
+        filename, file_path
+    );
+
+    // Compute SHA-512 hash of newly uploaded file
+    let new_file_hash = compute_file_sha512(&file_path).map_err(|e| {
+        error!("Failed to compute SHA-512 hash of uploaded file: {}", e);
+        AppError::InternalError(format!("Failed to compute file hash: {}", e))
+    })?;
+
+    info!("New file SHA-512: {}...", &new_file_hash[..16]);
+
+    // Get the relative path from root_dir
+    let relative_path = file_path
+        .strip_prefix(&canonical_root)
+        .unwrap_or(&file_path)
+        .to_string_lossy()
+        .to_string();
+
+    Ok(Json(crate::models::UploadResponse {
+        message: "File uploaded successfully".to_string(),
+        filename,
+        location: relative_path,
+        uploaded_by: user.to_string(),
+        skipped: false,
+        sha512: Some(new_file_hash),
     }))
 }
