@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using FilePiWeb;
 using FilePiWeb.Interfaces;
 using FilePiWeb.Services;
@@ -6,6 +6,8 @@ using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using Refit;
 using Serilog;
+using Syncfusion.Blazor;
+using Syncfusion.Licensing;
 
 // Configure Serilog for WebAssembly (browser console only)
 Log.Logger = new LoggerConfiguration()
@@ -19,6 +21,16 @@ try
     Log.Information("Starting FilePi WebAssembly Application");
 
     var builder = WebAssemblyHostBuilder.CreateDefault(args);
+    var syncfusionKey = builder.Configuration["SyncfusionLicenseKey"];
+    if (!string.IsNullOrEmpty(syncfusionKey))
+    {
+        SyncfusionLicenseProvider.RegisterLicense(syncfusionKey);
+        Log.Information("Syncfusion license registered successfully");
+    }
+    else
+    {
+        Log.Warning("Syncfusion license key not found in configuration");
+    }
 
     // Add Serilog to the DI container
     builder.Services.AddLogging(loggingBuilder =>
@@ -26,6 +38,8 @@ try
 
     builder.RootComponents.Add<App>("#app");
     builder.RootComponents.Add<HeadOutlet>("head::after");
+
+    builder.Services.AddSyncfusionBlazor();
 
     // Configure Refit with proper JSON settings
     var refitSettings = new RefitSettings

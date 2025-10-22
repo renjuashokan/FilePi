@@ -111,13 +111,13 @@ function Build-Rust {
     Write-Step "Building Rust application..."
     
     # Clean previous build
-    if ($Mode -eq "release") {
-        Write-Step "Cleaning previous release build..."
-        cargo clean --release
-    } else {
-        Write-Step "Cleaning previous debug build..."
-        cargo clean
-    }
+    # if ($Mode -eq "release") {
+    #     Write-Step "Cleaning previous release build..."
+    #     cargo clean --release
+    # } else {
+    #     Write-Step "Cleaning previous debug build..."
+    #     cargo clean
+    # }
     
     # Build Rust application
     try {
@@ -200,10 +200,3 @@ if (Test-Path "target\debug\filepi-rust.exe") {
 if (Test-Path "webdeploy") {
     Write-Host "  - Blazor UI: .\webdeploy\"
 }
-
-Write-Host ""
-Write-Host "🚀 To run locally:"
-Write-Host '  $env:FILE_PI_ROOT_DIR="C:\path\to\media"; .\filepi.exe'
-Write-Host ""
-Write-Host "🌐 Then access FilePi at:"
-Write-Host "  http://localhost:8080"

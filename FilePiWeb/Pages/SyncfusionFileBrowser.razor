@@ -1,0 +1,51 @@
+@page "/"
+@page "/FileBrowser"
+@page "/files"
+@page "/syncfusion-browser"
+@page "/syncfusion-browser/{currentPath?}"
+@using FilePiWeb.Interfaces
+@inject IFileService FileService
+@inject NavigationManager Navigation
+
+<PageTitle>Syncfusion File Manager - FilePi</PageTitle>
+
+<div class="container-fluid">
+
+	<div class="row">
+		<div class="col-12">
+			<div class="card">
+				<div class="card-body">
+					<SfFileManager TValue="FileManagerDirectoryContent">
+						<FileManagerAjaxSettings Url="/api/v1/syncfusion/fileoperations"
+												 DownloadUrl="/api/v1/file/"
+												 UploadUrl="/api/v1/uploadfile"
+												 GetImageUrl="/api/v1/thumbnail/">
+						</FileManagerAjaxSettings>
+					</SfFileManager>
+				</div>
+			</div>
+		</div>
+	</div>
+</div>
+
+@code {
+	[Parameter] public string? CurrentPath { get; set; }
+
+	private List<ToolBarItemModel> ToolbarItems = new List<ToolBarItemModel>()
+	{
+		new ToolBarItemModel() { Name = "NewFolder" },
+		new ToolBarItemModel() { Name = "Upload" },
+		new ToolBarItemModel() { Name = "Delete" },
+		new ToolBarItemModel() { Name = "Download" },
+		new ToolBarItemModel() { Name = "Rename" },
+		new ToolBarItemModel() { Name = "SortBy" },
+		new ToolBarItemModel() { Name = "Refresh" },
+		new ToolBarItemModel() { Name = "Selection" },
+		new ToolBarItemModel() { Name = "View" },
+		new ToolBarItemModel() { Name = "Details" },
+	};
+
+	private string[] FileMenuItems = new string[] { "Open", "|", "Delete", "Download", "Rename", "|", "Details" };
+	private string[] FolderMenuItems = new string[] { "Open", "|", "Delete", "Rename", "Download", "|", "Details" };
+	private string[] LayoutMenuItems = new string[] { "SortBy", "View", "Refresh", "|", "NewFolder", "Upload", "|", "Details", "|", "SelectAll" };
+}

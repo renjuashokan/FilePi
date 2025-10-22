@@ -100,7 +100,7 @@ fn get_file_owner(_path: &Path) -> Option<String> {
 }
 
 fn get_size<P: AsRef<Path>>(path: P) -> std::io::Result<u64> {
-    let mut total_size = 0;
+    let total_size = 0;
     let path = path.as_ref();
 
     // If it's a file, return its size
@@ -109,6 +109,8 @@ fn get_size<P: AsRef<Path>>(path: P) -> std::io::Result<u64> {
         return Ok(metadata.len());
     }
 
+    return Ok(total_size);
+    /*
     // If it's a directory, traverse recursively
     for entry in fs::read_dir(path)? {
         let entry = entry?;
@@ -124,4 +126,5 @@ fn get_size<P: AsRef<Path>>(path: P) -> std::io::Result<u64> {
     }
 
     Ok(total_size)
+    */
 }

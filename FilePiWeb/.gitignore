@@ -427,3 +427,7 @@ libman.json.cache
 .idea/
 *.iml
 *.iws
+
+# Ignore actual config files with secrets
+wwwroot/appsettings.json
+wwwroot/appsettings.*.json
