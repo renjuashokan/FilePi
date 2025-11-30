@@ -1,10 +1,7 @@
 ﻿using System.Text.Json;
 using FilePiWeb;
-using FilePiWeb.Interfaces;
-using FilePiWeb.Services;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
-using Refit;
 using Serilog;
 using Syncfusion.Blazor;
 using Syncfusion.Licensing;
@@ -41,16 +38,6 @@ try
 
     builder.Services.AddSyncfusionBlazor();
 
-    // Configure Refit with proper JSON settings
-    var refitSettings = new RefitSettings
-    {
-        ContentSerializer = new SystemTextJsonContentSerializer(
-            new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower, PropertyNameCaseInsensitive = true
-            })
-    };
-
     // Get port from environment variable or use default with error handling
     string? portString = Environment.GetEnvironmentVariable("FILE_PI_PORT");
     int port = 8080; // default port
@@ -65,12 +52,6 @@ try
     Uri apiBaseUrl = new UriBuilder { Scheme = baseAddress.Scheme, Host = baseAddress.Host, Port = port }.Uri;
 
     Log.Information("API Base URL: {ApiBaseUrl}", apiBaseUrl);
-
-    // Register Refit client with dynamic port
-    builder.Services.AddRefitClient<IFilePiApi>(refitSettings)
-        .ConfigureHttpClient(c => c.BaseAddress = apiBaseUrl);
-
-    builder.Services.AddSingleton<IFileService, FileService>();
 
     await builder.Build().RunAsync();
 }

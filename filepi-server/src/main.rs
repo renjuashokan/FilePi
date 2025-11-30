@@ -9,7 +9,6 @@ use axum::{
     middleware as axum_middleware,
     response::IntoResponse,
     routing::{get, post},
-    extract::DefaultBodyLimit,
 };
 
 use axum::body::Body;

@@ -33,16 +33,13 @@ pub async fn logging_middleware(request: Request, next: Next) -> Response {
     } else {
         let bytes = body.collect().await.unwrap_or_default().to_bytes();
         let mut body_str = String::from_utf8_lossy(&bytes).to_string();
-        
+
         if body_str.len() > 100 {
             body_str.truncate(100);
             body_str.push_str("... (truncated)");
         }
 
-        (
-            body_str,
-            Request::from_parts(parts, Body::from(bytes)),
-        )
+        (body_str, Request::from_parts(parts, Body::from(bytes)))
     };
 
     // Process the request

@@ -5,11 +5,8 @@ use axum::{
     http::{StatusCode, header},
     response::IntoResponse,
 };
-use axum_typed_multipart::{FieldData, TryFromMultipart, TypedMultipart};
-use bytes::Bytes;
 use mime_guess::from_path;
 use serde::Deserialize;
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::File;
@@ -177,7 +174,10 @@ pub async fn upload(
     mut multipart: Multipart,
 ) -> Result<impl IntoResponse, AppError> {
     info!("Syncfusion Upload2 (Streaming)");
-    info!("Query params - path: {:?}, action: {:?}", params.path, params.action);
+    info!(
+        "Query params - path: {:?}, action: {:?}",
+        params.path, params.action
+    );
 
     let root_dir = PathBuf::from(&config.root_dir);
     let mut current_path = params.path.unwrap_or_else(|| String::from("/"));
@@ -188,7 +188,10 @@ pub async fn upload(
     })? {
         let name = field.name().unwrap_or("").to_string();
         let content_type = field.content_type().unwrap_or("").to_string();
-        info!("Multipart field: name='{}', content_type='{}'", name, content_type);
+        info!(
+            "Multipart field: name='{}', content_type='{}'",
+            name, content_type
+        );
 
         if name == "path" {
             if let Ok(val) = field.text().await {
@@ -196,30 +199,41 @@ pub async fn upload(
                 info!("Upload path set to: '{}'", current_path);
             }
         } else if name == "action" {
-             if let Ok(val) = field.text().await {
+            if let Ok(val) = field.text().await {
                 info!("Multipart action: '{}'", val);
             }
         } else if name == "uploadFiles" {
             let file_name = field.file_name().unwrap_or("uploaded_file").to_string();
-            info!("Processing file field: '{}'. Current path context: '{}'", file_name, current_path);
+            info!(
+                "Processing file field: '{}'. Current path context: '{}'",
+                file_name, current_path
+            );
 
             let relative_path = current_path.trim_start_matches('/');
-            info!("Root dir: {:?}, Relative path: '{}'", root_dir, relative_path);
+            info!(
+                "Root dir: {:?}, Relative path: '{}'",
+                root_dir, relative_path
+            );
 
-            let canonical_upload_dir = syncfusion_fm_backend::validate_path(&root_dir, relative_path)
-                .map_err(|_| {
-                    error!("Path validation failed for relative path: '{}'", relative_path);
+            let canonical_upload_dir =
+                syncfusion_fm_backend::validate_path(&root_dir, relative_path).map_err(|_| {
+                    error!(
+                        "Path validation failed for relative path: '{}'",
+                        relative_path
+                    );
                     AppError::BadRequest("Invalid upload path".to_string())
                 })?;
-            
+
             info!("Canonical upload dir: {:?}", canonical_upload_dir);
 
             if !canonical_upload_dir.exists() {
                 info!("Creating directory: {:?}", canonical_upload_dir);
-                tokio::fs::create_dir_all(&canonical_upload_dir).await.map_err(|e| {
-                    error!("Failed to create upload directory: {}", e);
-                    AppError::InternalError(format!("Failed to create directory: {}", e))
-                })?;
+                tokio::fs::create_dir_all(&canonical_upload_dir)
+                    .await
+                    .map_err(|e| {
+                        error!("Failed to create upload directory: {}", e);
+                        AppError::InternalError(format!("Failed to create directory: {}", e))
+                    })?;
             }
 
             let file_path = canonical_upload_dir.join(&file_name);
@@ -244,10 +258,10 @@ pub async fn upload(
                     AppError::InternalError(format!("Failed to write chunk: {}", e))
                 })?;
             }
-            
+
             file.flush().await.map_err(|e| {
-                 error!("Failed to flush file: {}", e);
-                 AppError::InternalError(format!("Failed to flush file: {}", e))
+                error!("Failed to flush file: {}", e);
+                AppError::InternalError(format!("Failed to flush file: {}", e))
             })?;
             info!("File saved successfully. Total bytes: {}", total_bytes);
         } else {
