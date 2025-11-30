@@ -3,11 +3,11 @@ name: Build Rust Server with Blazor Frontend
 on:
   push:
     branches:
-        - main_rs
+        - main
         - try/*
   pull_request:
     branches:
-        - main_rs
+        - main
   workflow_dispatch:
 
 jobs:
