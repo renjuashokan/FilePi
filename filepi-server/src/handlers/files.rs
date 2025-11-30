@@ -25,6 +25,12 @@ use crate::models::file_info::FileInfo;
 use crate::models::{
     CreateFolderRequest, CreateFolderResponse, FileQuery, FilesResponse, UploadForm,
 };
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+pub struct ServeFileParams {
+    pub inline: Option<bool>,
+}
 
 // Handler for GET /api/v1/files
 pub async fn get_files(
@@ -285,6 +291,7 @@ pub async fn search(
 pub async fn serve_file(
     State(config): State<Arc<Config>>,
     Path(file_path): Path<String>,
+    Query(params): Query<ServeFileParams>,
 ) -> Result<impl IntoResponse, AppError> {
     let file_path = file_path.trim_start_matches('/');
     let abs_path = PathBuf::from(&config.root_dir).join(file_path);
@@ -338,7 +345,11 @@ pub async fn serve_file(
             (header::CONTENT_LENGTH, metadata.len().to_string()),
             (
                 header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"{}\"", file_name),
+                if params.inline.unwrap_or(false) {
+                    format!("inline; filename=\"{}\"", file_name)
+                } else {
+                    format!("attachment; filename=\"{}\"", file_name)
+                },
             ),
         ],
         body,

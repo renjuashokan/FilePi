@@ -8,6 +8,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+
 print_step() {
     echo -e "${BLUE}📦 $1${NC}"
 }
@@ -24,11 +25,13 @@ print_error() {
     echo -e "${RED}❌ $1${NC}"
 }
 
+
 # Parse command line arguments
 BUILD_TYPE="all"
-BUILD_MODE="release"
+BUILD_MODE="debug"
 PKG_VERSION="1.0.0"
 PKG_ARCH=$(dpkg --print-architecture 2>/dev/null || echo "amd64")
+CLEAN_BUILD="false"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -48,6 +51,10 @@ while [[ $# -gt 0 ]]; do
             PKG_ARCH="$2"
             shift 2
             ;;
+        --clean)
+            CLEAN_BUILD="true"
+            shift 1
+            ;;
         -h|--help)
             echo "Usage: $0 [options]"
             echo "Options:"
@@ -55,6 +62,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --mode [debug|release]        Build mode (default: release)"
             echo "  --version VERSION             Package version (default: 1.0.0)"
             echo "  --arch ARCH                   Package architecture (default: auto-detect)"
+            echo "  --clean                       Clean build artifacts before building"
             echo "  -h, --help                    Show this help"
             echo ""
             echo "Examples:"
@@ -78,20 +86,26 @@ echo "Version: $PKG_VERSION"
 echo "Architecture: $PKG_ARCH"
 echo ""
 
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+FILEPI_WEB_DIR="$SCRIPT_DIR/frontend/FilePiWeb"
+WEBDEPLOY_DIR="$SCRIPT_DIR/webdeploy"
+
 # Function to build Blazor WebAssembly
 build_blazor() {
     print_step "Building Blazor WebAssembly frontend..."
+    TEMP_PUBLISH_DIR="$SCRIPT_DIR/temp-publish"
+    WEB_PROJECT="FilePiWeb.csproj"
     
-    if [ ! -d "FilePiWeb" ]; then
+    if [ ! -d "$FILEPI_WEB_DIR" ]; then
         print_error "FilePiWeb directory not found. Please create the Blazor project first."
         return 1
     fi
     
     # Clean previous build
-    rm -rf webdeploy/ temp-publish/
+    rm -rf $WEBDEPLOY_DIR $TEMP_PUBLISH_DIR
     
     # Build Blazor WebAssembly
-    cd FilePiWeb
+    cd $FILEPI_WEB_DIR
     
     # Restore LibMan packages if libman.json exists
     if [ -f "libman.json" ]; then
@@ -104,27 +118,32 @@ build_blazor() {
     fi
     
     # Build and publish Blazor
-    dotnet publish -c Release -o ../temp-publish
+    dotnet restore $WEB_PROJECT
+    dotnet build $WEB_PROJECT -c Release
+    dotnet publish $WEB_PROJECT -c Release -o $TEMP_PUBLISH_DIR
     cd ..
     
     # Copy only the wwwroot contents to webdeploy
-    mkdir -p webdeploy
-    cp -r temp-publish/wwwroot/* webdeploy/
-    rm -rf temp-publish/
+    mkdir -p $WEBDEPLOY_DIR
+    cp -r $TEMP_PUBLISH_DIR/wwwroot/* $WEBDEPLOY_DIR/
+    rm -rf $TEMP_PUBLISH_DIR
     
     print_success "Blazor WebAssembly build completed"
-    echo "Output: ./webdeploy/"
+    echo "Output: $WEBDEPLOY_DIR"
 }
+
 
 # Function to build Rust application
 build_rust() {
     print_step "Building Rust application..."
     
     # Clean previous build
-    if [ "$BUILD_MODE" = "release" ]; then
-        cargo clean --release
-    else
-        cargo clean
+    if [ "$CLEAN_BUILD" = "true" ]; then
+        if [ "$BUILD_MODE" = "release" ]; then
+            cargo clean --release
+        else
+            cargo clean
+        fi
     fi
     
     # Build Rust application
@@ -179,9 +198,9 @@ case $BUILD_TYPE in
     "rust")
         build_rust
         ;;
-    "deb")
-        build_deb
-        ;;
+    # "deb")
+    #     build_deb
+    #     ;;
     "all")
         build_blazor
         build_rust
@@ -212,10 +231,3 @@ fi
 if [ -f "outputs/filepi_${PKG_VERSION}_${PKG_ARCH}.deb" ]; then
     echo "  - Debian package: outputs/filepi_${PKG_VERSION}_${PKG_ARCH}.deb"
 fi
-
-echo ""
-echo "🚀 To run locally:"
-echo "  FILE_PI_ROOT_DIR=/path/to/media ./filepi"
-echo ""
-echo "🌐 Then access FilePi at:"
-echo "  http://localhost:8080"

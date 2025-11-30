@@ -9,6 +9,7 @@ use axum::{
     middleware as axum_middleware,
     response::IntoResponse,
     routing::{get, post},
+    extract::DefaultBodyLimit,
 };
 
 use axum::body::Body;
@@ -31,12 +32,20 @@ async fn main() {
     let config = Config::from_env().expect("Failed to load configuration");
 
     // Initialize logging with the configured log level
+    let file_appender = tracing_appender::rolling::daily(&config.log_dir, "filepi.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| config.log_level.clone().into()),
         )
         .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(non_blocking),
+        )
         .init();
 
     tracing::info!("📁 Root directory: {}", config.root_dir);
@@ -65,6 +74,9 @@ async fn main() {
             "/syncfusion/fileoperations",
             post(handlers::syncfusion::file_operations),
         )
+        .route("/syncfusion/download", post(handlers::syncfusion::download))
+        .route("/syncfusion/upload", post(handlers::syncfusion::upload))
+        .route("/syncfusion/getimage", get(handlers::syncfusion::get_image))
         .with_state(shared_config.clone());
 
     // Check if webdeploy directory exists

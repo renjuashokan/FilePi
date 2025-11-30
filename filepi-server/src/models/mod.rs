@@ -1,5 +1,4 @@
 pub mod file_info;
-pub mod syncfusion;
 use crate::models::file_info::FileInfo;
 use axum_typed_multipart::{FieldData, TryFromMultipart};
 use serde::{Deserialize, Serialize};

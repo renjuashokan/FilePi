@@ -1,202 +1,148 @@
-# PowerShell Build Script for FilePi (Rust + Blazor)
-param(
+param (
     [string]$Type = "all",
-    [string]$Mode = "release",
-    [string]$Version = "1.0.0"
+    [string]$Mode = "debug",
+    [string]$Version = "1.0.0",
+    [string]$Arch = "auto",
+    [switch]$Clean = $false,
+    [switch]$Help = $false
 )
 
-$ErrorActionPreference = "Stop"
-
-# Color functions
-function Write-Step {
-    param([string]$Message)
-    Write-Host "📦 $Message" -ForegroundColor Blue
-}
-
-function Write-Success {
-    param([string]$Message)
-    Write-Host "✅ $Message" -ForegroundColor Green
-}
-
-function Write-Warning-Custom {
-    param([string]$Message)
-    Write-Host "⚠️  $Message" -ForegroundColor Yellow
-}
-
-function Write-Error-Custom {
-    param([string]$Message)
-    Write-Host "❌ $Message" -ForegroundColor Red
-}
-
-# Help function
-function Show-Help {
+if ($Help) {
     Write-Host "Usage: .\build.ps1 [options]"
-    Write-Host ""
     Write-Host "Options:"
-    Write-Host "  -Type [all|rust|blazor]    What to build (default: all)"
-    Write-Host "  -Mode [debug|release]      Build mode (default: release)"
-    Write-Host "  -Version VERSION           Package version (default: 1.0.0)"
+    Write-Host "  -Type [all|rust|blazor]       What to build (default: all)"
+    Write-Host "  -Mode [debug|release]         Build mode (default: debug)"
+    Write-Host "  -Version VERSION              Package version (default: 1.0.0)"
+    Write-Host "  -Arch ARCH                    Package architecture (default: auto)"
+    Write-Host "  -Clean                        Clean build artifacts before building"
+    Write-Host "  -Help                         Show this help"
     Write-Host ""
     Write-Host "Examples:"
-    Write-Host "  .\build.ps1                      # Build everything in release mode"
-    Write-Host "  .\build.ps1 -Type blazor         # Build only Blazor frontend"
-    Write-Host "  .\build.ps1 -Mode debug          # Build in debug mode"
+    Write-Host "  .\build.ps1                                   # Build everything in debug mode"
+    Write-Host "  .\build.ps1 -Type blazor                      # Build only Blazor frontend"
+    Write-Host "  .\build.ps1 -Mode release                     # Build in release mode"
     exit 0
 }
 
-if ($Type -eq "help" -or $Type -eq "-h") {
-    Show-Help
-}
+$ErrorActionPreference = "Stop"
+
+# Colors
+function Write-Step { param([string]$Message) Write-Host "📦 $Message" -ForegroundColor Cyan }
+function Write-Success { param([string]$Message) Write-Host "✅ $Message" -ForegroundColor Green }
+function Write-Warning { param([string]$Message) Write-Host "⚠️  $Message" -ForegroundColor Yellow }
+function Write-Error { param([string]$Message) Write-Host "❌ $Message" -ForegroundColor Red }
 
 Write-Step "Starting FilePi build process..."
 Write-Host "Build type: $Type"
 Write-Host "Build mode: $Mode"
 Write-Host "Version: $Version"
+Write-Host "Architecture: $Arch"
 Write-Host ""
 
-# Function to build Blazor WebAssembly
+$ScriptDir = $PSScriptRoot
+$FilePiWebDir = Join-Path $ScriptDir "frontend\FilePiWeb"
+$WebDeployDir = Join-Path $ScriptDir "webdeploy"
+
 function Build-Blazor {
     Write-Step "Building Blazor WebAssembly frontend..."
-    
-    if (-not (Test-Path "FilePiWeb")) {
-        Write-Error-Custom "FilePiWeb directory not found. Please create the Blazor project first."
-        return $false
+    $TempPublishDir = Join-Path $ScriptDir "temp-publish"
+    $WebProject = "FilePiWeb.csproj"
+
+    if (-not (Test-Path $FilePiWebDir)) {
+        Write-Error "FilePiWeb directory not found. Please create the Blazor project first."
+        return
     }
-    
+
     # Clean previous build
-    if (Test-Path "webdeploy") {
-        Remove-Item -Recurse -Force "webdeploy"
-    }
-    if (Test-Path "temp-publish") {
-        Remove-Item -Recurse -Force "temp-publish"
-    }
-    
-    # Build Blazor WebAssembly
-    Push-Location FilePiWeb
-    
-    try {
-        # Restore LibMan packages if libman.json exists
-        if (Test-Path "libman.json") {
-            Write-Step "Restoring client-side libraries..."
-            if (Get-Command libman -ErrorAction SilentlyContinue) {
-                libman restore
-            } else {
-                Write-Warning-Custom "libman not found, skipping client library restore"
-            }
+    if (Test-Path $WebDeployDir) { Remove-Item -Recurse -Force $WebDeployDir }
+    if (Test-Path $TempPublishDir) { Remove-Item -Recurse -Force $TempPublishDir }
+
+    Push-Location $FilePiWebDir
+
+    # Restore LibMan packages if libman.json exists
+    if (Test-Path "libman.json") {
+        Write-Step "Restoring client-side libraries..."
+        if (Get-Command libman -ErrorAction SilentlyContinue) {
+            libman restore
         }
-        
-        # Build and publish Blazor
-        Write-Step "Publishing Blazor project..."
-        dotnet publish -c Release -o ..\temp-publish
-        if ($LASTEXITCODE -ne 0) {
-            throw "Blazor build failed"
+        else {
+            Write-Warning "libman not found, skipping client library restore"
         }
     }
-    finally {
-        Pop-Location
-    }
+
+    # Build and publish Blazor
+    dotnet restore $WebProject
+    dotnet build $WebProject -c Release
+    dotnet publish $WebProject -c Release -o $TempPublishDir
     
+    Pop-Location
+
     # Copy only the wwwroot contents to webdeploy
-    New-Item -ItemType Directory -Force -Path "webdeploy" | Out-Null
-    Copy-Item -Path "temp-publish\wwwroot\*" -Destination "webdeploy\" -Recurse -Force
-    Remove-Item -Recurse -Force "temp-publish"
-    
+    New-Item -ItemType Directory -Force -Path $WebDeployDir | Out-Null
+    Copy-Item -Recurse -Force "$TempPublishDir\wwwroot\*" $WebDeployDir
+    Remove-Item -Recurse -Force $TempPublishDir
+
     Write-Success "Blazor WebAssembly build completed"
-    Write-Host "Output: .\webdeploy\"
-    return $true
+    Write-Host "Output: $WebDeployDir"
 }
 
-# Function to build Rust application
 function Build-Rust {
     Write-Step "Building Rust application..."
-    
+
     # Clean previous build
-    # if ($Mode -eq "release") {
-    #     Write-Step "Cleaning previous release build..."
-    #     cargo clean --release
-    # } else {
-    #     Write-Step "Cleaning previous debug build..."
-    #     cargo clean
-    # }
-    
-    # Build Rust application
-    try {
+    if ($Clean) {
         if ($Mode -eq "release") {
-            Write-Step "Building in release mode (optimized)..."
-            cargo build --release
-            if ($LASTEXITCODE -ne 0) {
-                throw "Rust build failed"
-            }
-            
-            # Copy binary to root for easier access
-            if (Test-Path "target\release\filepi-rust.exe") {
-                Copy-Item "target\release\filepi-rust.exe" "filepi.exe" -Force
-            }
-            
-            Write-Success "Rust application build completed (release)"
-            Write-Host "Output: .\target\release\filepi-rust.exe or .\filepi.exe"
-        } else {
-            Write-Step "Building in debug mode..."
-            cargo build
-            if ($LASTEXITCODE -ne 0) {
-                throw "Rust build failed"
-            }
-            
-            # Copy binary to root for easier access
-            if (Test-Path "target\debug\filepi-rust.exe") {
-                Copy-Item "target\debug\filepi-rust.exe" "filepi.exe" -Force
-            }
-            
-            Write-Success "Rust application build completed (debug)"
-            Write-Host "Output: .\target\debug\filepi-rust.exe or .\filepi.exe"
+            cargo clean --release
         }
-        return $true
+        else {
+            cargo clean
+        }
     }
-    catch {
-        Write-Error-Custom "Rust build failed: $_"
-        return $false
+
+    # Build Rust application
+    if ($Mode -eq "release") {
+        Write-Step "Building in release mode (optimized)..."
+        cargo build --release
+
+        # Copy binary to root
+        $Target = "target\release\filepi.exe"
+        if (Test-Path $Target) {
+            Copy-Item -Force $Target ".\filepi.exe"
+            Write-Success "Rust application build completed (release)"
+            Write-Host "Output: $Target or .\filepi.exe"
+        }
+        else {
+            Write-Error "Build failed: $Target not found"
+        }
+    }
+    else {
+        Write-Step "Building in debug mode..."
+        cargo build
+
+        # Copy binary to root
+        $Target = "target\debug\filepi.exe"
+        if (Test-Path $Target) {
+            Copy-Item -Force $Target ".\filepi.exe"
+            Write-Success "Rust application build completed (debug)"
+            Write-Host "Output: $Target or .\filepi.exe"
+        }
+        else {
+            Write-Error "Build failed: $Target not found"
+        }
     }
 }
 
-# Execute based on build type
-$success = $true
-
-switch ($Type.ToLower()) {
-    "blazor" {
-        $success = Build-Blazor
-    }
-    "rust" {
-        $success = Build-Rust
-    }
+switch ($Type) {
+    "blazor" { Build-Blazor }
+    "rust" { Build-Rust }
     "all" {
-        $success = (Build-Blazor) -and (Build-Rust)
+        Build-Blazor
+        Build-Rust
     }
     default {
-        Write-Error-Custom "Invalid build type: $Type"
-        Show-Help
+        Write-Error "Invalid build type: $Type"
         exit 1
     }
 }
 
-if (-not $success) {
-    Write-Error-Custom "Build process failed!"
-    exit 1
-}
-
 Write-Success "Build process completed!"
-
-# Show final outputs
-Write-Host ""
-Write-Host "📁 Generated files:"
-if (Test-Path "filepi.exe") {
-    Write-Host "  - Rust executable: .\filepi.exe"
-}
-if (Test-Path "target\release\filepi-rust.exe") {
-    Write-Host "  - Rust executable: .\target\release\filepi-rust.exe"
-}
-if (Test-Path "target\debug\filepi-rust.exe") {
-    Write-Host "  - Rust executable: .\target\debug\filepi-rust.exe"
-}
-if (Test-Path "webdeploy") {
-    Write-Host "  - Blazor UI: .\webdeploy\"
-}

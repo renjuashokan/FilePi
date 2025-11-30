@@ -6,6 +6,7 @@ pub struct Config {
     pub port: u16,
     pub log_level: String,
     pub cache_dir: PathBuf,
+    pub log_dir: PathBuf,
 }
 
 impl Config {
@@ -22,12 +23,14 @@ impl Config {
             .unwrap();
 
         let log_level = env::var("FILE_PI_LOGLEVEL").unwrap_or_else(|_| "info".to_string());
+        let log_dir = env::var("FILE_PI_LOG_DIR").unwrap_or_else(|_| "./logs".to_string());
 
         Ok(Config {
             root_dir,
             port,
             log_level,
             cache_dir,
+            log_dir: PathBuf::from(log_dir),
         })
     }
 }

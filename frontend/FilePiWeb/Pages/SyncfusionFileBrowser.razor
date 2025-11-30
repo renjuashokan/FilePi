@@ -9,31 +9,25 @@
 
 <PageTitle>Syncfusion File Manager - FilePi</PageTitle>
 
-<div class="container-fluid">
+@layout FilePiWeb.Layout.EmptyLayout
 
-	<div class="row">
-		<div class="col-12">
-			<div class="card">
-				<div class="card-body">
-					<SfFileManager TValue="FileManagerDirectoryContent">
-						<FileManagerAjaxSettings Url="/api/v1/syncfusion/fileoperations"
-												 DownloadUrl="/api/v1/file/"
-												 UploadUrl="/api/v1/uploadfile"
-												 GetImageUrl="/api/v1/thumbnail/">
-						</FileManagerAjaxSettings>
-					</SfFileManager>
-				</div>
-			</div>
-		</div>
-	</div>
-</div>
+<SfFileManager TValue="FileManagerDirectoryContent" Height="100%" Width="100%">
+    <FileManagerAjaxSettings Url="/api/v1/syncfusion/fileoperations"
+                             DownloadUrl="/api/v1/syncfusion/download"
+                             UploadUrl="/api/v1/syncfusion/upload"
+                             GetImageUrl="/api/v1/syncfusion/getimage">
+    </FileManagerAjaxSettings>
+    <FileManagerEvents TValue="FileManagerDirectoryContent" ></FileManagerEvents>
+    <FileManagerNavigationPaneSettings Visible="true" />
+</SfFileManager>
 
 @code {
 	[Parameter] public string? CurrentPath { get; set; }
 
 	private List<ToolBarItemModel> ToolbarItems = new List<ToolBarItemModel>()
 	{
-		new ToolBarItemModel() { Name = "NewFolder" },
+        //new ToolBarItemModel() { Name = "Back", TooltipText = "Go Back", PrefixIcon = "e-icons e-arrow-left" },
+        new ToolBarItemModel() { Name = "NewFolder" },
 		new ToolBarItemModel() { Name = "Upload" },
 		new ToolBarItemModel() { Name = "Delete" },
 		new ToolBarItemModel() { Name = "Download" },
@@ -48,4 +42,12 @@
 	private string[] FileMenuItems = new string[] { "Open", "|", "Delete", "Download", "Rename", "|", "Details" };
 	private string[] FolderMenuItems = new string[] { "Open", "|", "Delete", "Rename", "Download", "|", "Details" };
 	private string[] LayoutMenuItems = new string[] { "SortBy", "View", "Refresh", "|", "NewFolder", "Upload", "|", "Details", "|", "SelectAll" };
+
+    public void ToolbarClick(ToolbarClickEventArgs<FileManagerDirectoryContent> args)
+    {
+        if (args.Item.Name == "Back")
+        {
+            Navigation.NavigateTo("/");
+        }
+    }
 }

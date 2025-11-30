@@ -39,6 +39,18 @@
         "jquery.min.js",
         "jquery.js"
       ]
+    },
+    {
+      "library": "photoswipe@5.4.4",
+      "destination": "wwwroot/lib/photoswipe"
+    },
+    {
+      "library": "plyr@3.8.3",
+      "destination": "wwwroot/lib/plyr",
+      "files": [
+        "plyr.css",
+        "plyr.js"
+      ]
     }
   ]
 }

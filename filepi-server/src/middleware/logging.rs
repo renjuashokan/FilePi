@@ -13,13 +13,37 @@ pub async fn logging_middleware(request: Request, next: Next) -> Response {
 
     // Extract and read the body
     let (parts, body) = request.into_parts();
-    let bytes = body.collect().await.unwrap_or_default().to_bytes();
 
-    // Convert bytes to string for logging (if it's text)
-    let body_str = String::from_utf8_lossy(&bytes);
+    let content_type = parts
+        .headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
 
-    // Reconstruct the request with the body
-    let request = Request::from_parts(parts, Body::from(bytes.clone()));
+    let is_binary = content_type.starts_with("image/")
+        || content_type.starts_with("video/")
+        || content_type.starts_with("application/octet-stream")
+        || content_type.starts_with("multipart/form-data");
+
+    let (body_str, request) = if is_binary {
+        (
+            format!("<binary data: {}>", content_type),
+            Request::from_parts(parts, body),
+        )
+    } else {
+        let bytes = body.collect().await.unwrap_or_default().to_bytes();
+        let mut body_str = String::from_utf8_lossy(&bytes).to_string();
+        
+        if body_str.len() > 100 {
+            body_str.truncate(100);
+            body_str.push_str("... (truncated)");
+        }
+
+        (
+            body_str,
+            Request::from_parts(parts, Body::from(bytes)),
+        )
+    };
 
     // Process the request
     let response = next.run(request).await;
