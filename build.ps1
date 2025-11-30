@@ -74,7 +74,7 @@ function Build-Blazor {
     dotnet restore $WebProject
     dotnet build $WebProject -c Release
     dotnet publish $WebProject -c Release -o $TempPublishDir
-    
+
     Pop-Location
 
     # Copy only the wwwroot contents to webdeploy
