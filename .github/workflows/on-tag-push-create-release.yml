@@ -101,15 +101,18 @@ jobs:
 
           console.log(`Found ${artifacts.data.artifacts.length} artifacts`);
 
-          // Filter for filepi artifacts (both binaries and debian packages)
+          // Filter for final release artifacts only (exclude intermediate build artifacts)
           const filepiArtifacts = artifacts.data.artifacts.filter(artifact =>
-            artifact.name.includes('filepi')
+            (artifact.name.startsWith('filepi-') && artifact.name.includes('-linux-')) ||
+            (artifact.name.startsWith('filepi_debian_'))
           );
 
           if (filepiArtifacts.length === 0) {
-            core.setFailed('No FilePi artifacts found in the latest build');
+            core.setFailed('No FilePi release artifacts found in the latest build');
             return;
           }
+
+          console.log(`Filtered to ${filepiArtifacts.length} release artifacts`);
 
           for (const artifact of filepiArtifacts) {
             console.log(`Downloading artifact: ${artifact.name}`);
@@ -137,7 +140,7 @@ jobs:
         for zip_file in *.zip; do
           if [ -f "$zip_file" ]; then
             echo "Extracting $zip_file"
-            unzip -q "$zip_file"
+            unzip -o -q "$zip_file"
             rm "$zip_file"
           fi
         done
