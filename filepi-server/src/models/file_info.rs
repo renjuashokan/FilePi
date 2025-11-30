@@ -49,7 +49,17 @@ impl FileInfo {
             .created()
             .ok()
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_millis());
+            .map(|d| d.as_millis())
+            .or_else(|| {
+                // Fallback to ctime on Unix systems
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    Some(metadata.ctime() as u128 * 1000)
+                }
+                #[cfg(not(unix))]
+                None
+            });
 
         let modified_time = metadata
             .modified()
