@@ -1,0 +1,26 @@
+# Ignore build artifacts
+target/
+build_deb_temp/
+outputs/
+
+# Ignore .NET build artifacts
+frontend/FilePiWeb/bin/
+frontend/FilePiWeb/obj/
+temp-publish/
+
+# Ignore logs
+logs/
+*.log
+
+# Ignore git
+.git/
+.gitignore
+
+# Ignore IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Ignore macOS files
+.DS_Store
