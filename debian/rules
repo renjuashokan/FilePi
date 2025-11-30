@@ -1,0 +1,17 @@
+#!/usr/bin/make -f
+%:
+	dh $@
+
+override_dh_auto_build:
+	# The binary and webdeploy files will be provided externally, so no build step here
+
+override_dh_auto_install:
+	mkdir -p debian/filepi/opt/filepi
+	mkdir -p debian/filepi/lib/systemd/system
+	mkdir -p debian/filepi/var/lib/filepi/media
+	cp filepi debian/filepi/opt/filepi/
+	cp debian/filepi.service debian/filepi/lib/systemd/system/
+	# Copy the webdeploy directory if it exists
+	if [ -d "webdeploy" ]; then \
+		cp -r webdeploy debian/filepi/opt/filepi/; \
+	fi

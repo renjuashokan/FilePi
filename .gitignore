@@ -25,3 +25,7 @@ webdeploy/
 temp-publish/
 logs/
 working-cs
+outputs/
+build_deb_temp/
+filepi
+filepi.exe

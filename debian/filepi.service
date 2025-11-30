@@ -1,0 +1,16 @@
+[Unit]
+Description=FilePi Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/filepi
+ExecStart=/opt/filepi/filepi
+Restart=always
+RestartSec=10
+Environment=FILE_PI_PORT=8080
+Environment=FILE_PI_ROOT_DIR=/var/lib/filepi/media
+
+[Install]
+WantedBy=multi-user.target

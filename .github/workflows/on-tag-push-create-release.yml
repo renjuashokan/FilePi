@@ -1,0 +1,344 @@
+name: Create FilePi Rust Server Release from Tag
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+      - "v*.*.*-*"  # For pre-releases like v1.0.1-rc1
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  common-vars:
+    name: Setup Release Variables
+    runs-on: ubuntu-latest
+    outputs:
+      tag-name: ${{ github.ref_name }}
+      release-name: ${{ steps.set-release-name.outputs.release-name }}
+      is-prerelease: ${{ steps.check-prerelease.outputs.is-prerelease }}
+      latest-run-id: ${{ steps.get-latest-build.outputs.run-id }}
+
+    steps:
+    - name: Echo context data
+      run: |
+        echo "github.ref - ${{github.ref}}"
+        echo "github.ref_name - ${{github.ref_name}}"
+        echo "github.event_name - ${{github.event_name}}"
+
+    - name: Set release name
+      id: set-release-name
+      run: |
+        TAG_NAME="${{ github.ref_name }}"
+        RELEASE_NAME="FilePi Server ${TAG_NAME}"
+        echo "release-name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
+        echo "Release name: ${RELEASE_NAME}"
+
+    - name: Check if prerelease
+      id: check-prerelease
+      run: |
+        TAG_NAME="${{ github.ref_name }}"
+        if [[ "$TAG_NAME" == *"-"* ]]; then
+          echo "is-prerelease=true" >> "$GITHUB_OUTPUT"
+          echo "This is a prerelease: $TAG_NAME"
+        else
+          echo "is-prerelease=false" >> "$GITHUB_OUTPUT"
+          echo "This is a stable release: $TAG_NAME"
+        fi
+
+    - name: Get latest successful build from main_rs
+      id: get-latest-build
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const runs = await github.rest.actions.listWorkflowRuns({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            workflow_id: 'on-push-build-all.yml',
+            branch: 'main_rs',
+            status: 'completed',
+            conclusion: 'success',
+            per_page: 1
+          });
+
+          if (runs.data.workflow_runs.length === 0) {
+            core.setFailed('No successful builds found on main_rs branch');
+            return;
+          }
+
+          const latestRun = runs.data.workflow_runs[0];
+          console.log(`Latest successful run: ${latestRun.id} (${latestRun.head_sha})`);
+          core.setOutput('run-id', latestRun.id);
+          core.setOutput('commit-sha', latestRun.head_sha);
+
+  download-artifacts:
+    name: Download Latest Build Artifacts
+    needs: common-vars
+    runs-on: ubuntu-latest
+    env:
+      ARTIFACTS_DIR: ./artifacts
+      RELEASE_DIR: ./release
+
+    steps:
+    - name: Create artifact directories
+      run: |
+        mkdir -p ${{ env.ARTIFACTS_DIR }} ${{ env.RELEASE_DIR }}
+
+    - name: Download artifacts from latest main_rs build
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+
+          // Get artifacts from the latest successful run
+          const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            run_id: ${{ needs.common-vars.outputs.latest-run-id }}
+          });
+
+          console.log(`Found ${artifacts.data.artifacts.length} artifacts`);
+
+          // Filter for filepi artifacts (both binaries and debian packages)
+          const filepiArtifacts = artifacts.data.artifacts.filter(artifact =>
+            artifact.name.includes('filepi')
+          );
+
+          if (filepiArtifacts.length === 0) {
+            core.setFailed('No FilePi artifacts found in the latest build');
+            return;
+          }
+
+          for (const artifact of filepiArtifacts) {
+            console.log(`Downloading artifact: ${artifact.name}`);
+
+            const download = await github.rest.actions.downloadArtifact({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              artifact_id: artifact.id,
+              archive_format: 'zip'
+            });
+
+            const artifactPath = path.join('${{ env.ARTIFACTS_DIR }}', `${artifact.name}.zip`);
+            fs.writeFileSync(artifactPath, Buffer.from(download.data));
+            console.log(`Saved to: ${artifactPath}`);
+          }
+
+    - name: Extract and prepare release assets
+      run: |
+        TAG_NAME="${{ needs.common-vars.outputs.tag-name }}"
+
+        echo "Extracting artifacts..."
+        cd ${{ env.ARTIFACTS_DIR }}
+
+        # Extract all downloaded zip files
+        for zip_file in *.zip; do
+          if [ -f "$zip_file" ]; then
+            echo "Extracting $zip_file"
+            unzip -q "$zip_file"
+            rm "$zip_file"
+          fi
+        done
+
+        cd "${{ github.workspace }}"
+
+        echo "Contents of artifacts directory:"
+        find ${{ env.ARTIFACTS_DIR }} -type f -exec ls -la {} \;
+
+        # Rename artifacts to include tag version instead of build number
+        echo "Preparing release assets..."
+
+        # Process binary tarballs
+        for tarball in ${{ env.ARTIFACTS_DIR }}/*.tar.gz; do
+          if [ -f "$tarball" ]; then
+            filename=$(basename "$tarball")
+            # Replace the build name with tag name in filename
+            new_filename=$(echo "$filename" | sed "s/main_rs_[0-9]\+/${TAG_NAME}/g")
+            cp "$tarball" "${{ env.RELEASE_DIR }}/${new_filename}"
+            echo "Prepared: ${new_filename}"
+          fi
+        done
+
+        # Process Debian packages
+        for deb in ${{ env.ARTIFACTS_DIR }}/*.deb; do
+          if [ -f "$deb" ]; then
+            filename=$(basename "$deb")
+            # Replace the build name with tag name in filename
+            new_filename=$(echo "$filename" | sed "s/main_rs_[0-9]\+/${TAG_NAME}/g")
+            cp "$deb" "${{ env.RELEASE_DIR }}/${new_filename}"
+            echo "Prepared: ${new_filename}"
+          fi
+        done
+
+        echo "Release assets prepared:"
+        ls -la ${{ env.RELEASE_DIR }}/
+
+    - name: Upload prepared release assets
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-assets-${{ needs.common-vars.outputs.tag-name }}
+        path: ${{ env.RELEASE_DIR }}
+
+  create-release:
+    name: Create GitHub Release
+    needs:
+      - common-vars
+      - download-artifacts
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_DIR: ./release
+
+    steps:
+    - name: Download prepared release assets
+      uses: actions/download-artifact@v6
+      with:
+        name: release-assets-${{ needs.common-vars.outputs.tag-name }}
+        path: ${{ env.RELEASE_DIR }}
+
+    - name: Create Release Notes
+      run: |
+        TAG_NAME="${{ needs.common-vars.outputs.tag-name }}"
+        cat > ${{ env.RELEASE_DIR }}/RELEASE_NOTES.md << EOF
+        # 🚀 FilePi Server ${TAG_NAME}
+
+        FilePi is a lightweight network file browser with a modern web interface for Raspberry Pi and resource-constrained devices.
+        Browse, stream, and manage files from any web browser or the [Pi View mobile app](https://github.com/renjuashokan/pi_view).
+
+        ## ✨ What's New in This Release
+
+        - 🌐 **Modern Web Interface**: Blazor WebAssembly frontend with responsive design
+        - 📱 **Mobile-Friendly**: Works seamlessly on desktop, tablet, and mobile devices
+        - 🎬 **Enhanced Video Gallery**: Grid and list views with thumbnail generation
+        - 📁 **Improved File Management**: Upload, download, create folders, search files
+        - 🎨 **Beautiful UI**: Bootstrap 5 + Font Awesome icons for a polished experience
+        - ⚡ **High Performance**: Rust-powered backend optimized for resource-constrained devices
+
+        ## 🚀 Quick Start
+
+        **Prerequisites:** FFmpeg is required (\`sudo apt install ffmpeg\`)
+
+        ### 📦 Debian Package (Recommended)
+        1. Download: \`filepi_${TAG_NAME}_<arch>.deb\`
+        2. Install: \`sudo dpkg -i filepi_${TAG_NAME}_<arch>.deb\`
+        3. Access: \`http://[device-ip]:8080\`
+
+        The service starts automatically and includes both the Rust backend and Blazor frontend.
+
+        ### 📁 Binary Installation
+        1. Download: \`filepi-${TAG_NAME}-linux-<arch>.tar.gz\`
+        2. Extract: \`tar -xzf filepi-*.tar.gz\`
+        3. Run: \`cd filepi-*/ && ./filepi\`
+        4. Configure: \`export FILE_PI_ROOT_DIR=/path/to/your/files\`
+
+        ## 🌐 Web Interface Features
+
+        - **📂 File Browser**: Navigate directories with breadcrumb navigation
+        - **🔍 Search**: Find files quickly with powerful search
+        - **📤 Upload**: Drag & drop or select multiple files
+        - **🎬 Video Player**: Stream videos with thumbnail previews
+        - **📱 Responsive**: Works on any device size
+        - **🎨 Modern UI**: Clean, intuitive interface
+
+        ## 📚 Documentation
+
+        📖 **[Installation Guide](docs/DEBIAN-INSTALL.md)** - Detailed setup and configuration
+
+        📚 **[Full Documentation](README.md)** - Features, API, and development guide
+
+        ## 🔗 Access Your Files
+
+        - **🌐 Web Browser**: \`http://[device-ip]:8080\`
+        - **📱 Mobile App**: [Pi View](https://github.com/renjuashokan/pi_view)
+        - **📺 Android TV**: [PiTV Explorer](https://github.com/renjuashokan/PiTVExplorer)
+
+        ## 🏗️ Architecture
+
+        - **Backend**: Rust server with high-performance async runtime (Tokio + Axum)
+        - **Frontend**: Blazor WebAssembly (C#)
+        - **UI Framework**: Bootstrap 5 + Font Awesome
+        - **Deployment**: Single binary + static files
+
+        ## 📦 Available Packages
+
+        - **amd64**: For 64-bit x86 systems (Intel/AMD)
+        - **arm64**: For 64-bit ARM systems (Raspberry Pi 4/5 with 64-bit OS)
+
+        ---
+
+        💡 **New to FilePi?** Check out the [installation guide](docs/DEBIAN-INSTALL.md) for step-by-step setup instructions.
+
+        🐛 **Found an issue?** Please report it on [GitHub Issues](https://github.com/renjuashokan/FilePi/issues).
+
+        EOF
+
+    - name: Verify release assets exist
+      run: |
+        echo "Verifying release assets..."
+
+        # Check for tarballs
+        TARBALL_COUNT=$(ls -1 ${{ env.RELEASE_DIR }}/filepi-*.tar.gz 2>/dev/null | wc -l)
+        if [ "$TARBALL_COUNT" -eq 0 ]; then
+          echo "ERROR: No tarball files found matching pattern: filepi-*.tar.gz"
+          exit 1
+        fi
+        echo "✅ Found $TARBALL_COUNT tarball(s)"
+
+        # Check for Debian packages
+        DEB_COUNT=$(ls -1 ${{ env.RELEASE_DIR }}/filepi_*.deb 2>/dev/null | wc -l)
+        if [ "$DEB_COUNT" -eq 0 ]; then
+          echo "ERROR: No Debian package files found matching pattern: filepi_*.deb"
+          exit 1
+        fi
+        echo "✅ Found $DEB_COUNT Debian package(s)"
+
+        echo "All expected release assets are present"
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        name: ${{ needs.common-vars.outputs.release-name }}
+        tag_name: ${{ needs.common-vars.outputs.tag-name }}
+        body_path: ${{ env.RELEASE_DIR }}/RELEASE_NOTES.md
+        draft: false
+        prerelease: ${{ needs.common-vars.outputs.is-prerelease }}
+        files: |
+          ${{ env.RELEASE_DIR }}/filepi-*.tar.gz
+          ${{ env.RELEASE_DIR }}/filepi_*.deb
+        fail_on_unmatched_files: true
+
+    - name: Clean up temporary artifacts
+      uses: geekyeggo/delete-artifact@v5
+      with:
+        name: |
+          release-assets-${{ needs.common-vars.outputs.tag-name }}
+
+    - name: Release Summary
+      run: |
+        echo "## 🎉 FilePi Server Release Created Successfully!" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**🏷️ Tag:** ${{ needs.common-vars.outputs.tag-name }}" >> $GITHUB_STEP_SUMMARY
+        echo "**📦 Release:** ${{ needs.common-vars.outputs.release-name }}" >> $GITHUB_STEP_SUMMARY
+        echo "**🔖 Type:** ${{ needs.common-vars.outputs.is-prerelease == 'true' && 'Pre-release' || 'Stable Release' }}" >> $GITHUB_STEP_SUMMARY
+        echo "**🔨 Source Build:** Run #${{ needs.common-vars.outputs.latest-run-id }} from main_rs" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📦 Release Assets:" >> $GITHUB_STEP_SUMMARY
+        for file in ${{ env.RELEASE_DIR }}/*; do
+          if [ -f "$file" ] && [[ "$file" != *"RELEASE_NOTES.md" ]]; then
+            filename=$(basename "$file")
+            size=$(ls -lh "$file" | awk '{print $5}')
+            if [[ "$filename" == *.tar.gz ]]; then
+              echo "- 🗃️ $filename ($size) - Binary with Web UI" >> $GITHUB_STEP_SUMMARY
+            elif [[ "$filename" == *.deb ]]; then
+              echo "- 📦 $filename ($size) - Debian Package" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+        done
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🌟 Key Features:" >> $GITHUB_STEP_SUMMARY
+        echo "- 🌐 Modern Blazor WebAssembly frontend" >> $GITHUB_STEP_SUMMARY
+        echo "- 📱 Responsive design for all devices" >> $GITHUB_STEP_SUMMARY
+        echo "- 🎬 Video streaming with thumbnails" >> $GITHUB_STEP_SUMMARY
+        echo "- 📁 Complete file management" >> $GITHUB_STEP_SUMMARY
+        echo "- ⚡ Optimized for Raspberry Pi" >> $GITHUB_STEP_SUMMARY

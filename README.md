@@ -9,6 +9,26 @@ Before building and running FilePi, ensure you have the following installed:
 *   **Rust**: [Install Rust](https://www.rust-lang.org/tools/install) (latest stable version)
 *   **.NET SDK**: [Install .NET SDK](https://dotnet.microsoft.com/download) (version 10.0)
 
+* **.Net Libman**
+
+    * Install .Net Libman
+    ```bash
+    dotnet tool install --global dotnet-libman
+    ```
+
+* **FFmpeg**
+
+    #### On Raspberry Pi / Debian / Ubuntu:
+    ```bash
+    sudo apt update
+    sudo apt install ffmpeg
+    ```
+
+    #### On macOS:
+    ```bash
+    brew install ffmpeg
+    ```
+
 ## Building
 
 To build the project, simply run the build script:

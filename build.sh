@@ -95,18 +95,18 @@ build_blazor() {
     print_step "Building Blazor WebAssembly frontend..."
     TEMP_PUBLISH_DIR="$SCRIPT_DIR/temp-publish"
     WEB_PROJECT="FilePiWeb.csproj"
-    
+
     if [ ! -d "$FILEPI_WEB_DIR" ]; then
         print_error "FilePiWeb directory not found. Please create the Blazor project first."
         return 1
     fi
-    
+
     # Clean previous build
     rm -rf $WEBDEPLOY_DIR $TEMP_PUBLISH_DIR
-    
+
     # Build Blazor WebAssembly
     cd $FILEPI_WEB_DIR
-    
+
     # Restore LibMan packages if libman.json exists
     if [ -f "libman.json" ]; then
         print_step "Restoring client-side libraries..."
@@ -116,18 +116,18 @@ build_blazor() {
             print_warning "libman not found, skipping client library restore"
         fi
     fi
-    
+
     # Build and publish Blazor
     dotnet restore $WEB_PROJECT
     dotnet build $WEB_PROJECT -c Release
     dotnet publish $WEB_PROJECT -c Release -o $TEMP_PUBLISH_DIR
     cd ..
-    
+
     # Copy only the wwwroot contents to webdeploy
     mkdir -p $WEBDEPLOY_DIR
     cp -r $TEMP_PUBLISH_DIR/wwwroot/* $WEBDEPLOY_DIR/
     rm -rf $TEMP_PUBLISH_DIR
-    
+
     print_success "Blazor WebAssembly build completed"
     echo "Output: $WEBDEPLOY_DIR"
 }
@@ -136,7 +136,7 @@ build_blazor() {
 # Function to build Rust application
 build_rust() {
     print_step "Building Rust application..."
-    
+
     # Clean previous build
     if [ "$CLEAN_BUILD" = "true" ]; then
         if [ "$BUILD_MODE" = "release" ]; then
@@ -145,47 +145,47 @@ build_rust() {
             cargo clean
         fi
     fi
-    
+
     # Build Rust application
     if [ "$BUILD_MODE" = "release" ]; then
         print_step "Building in release mode (optimized)..."
         cargo build --release
-        
+
         # Copy binary to root for easier access
-        cp target/release/filepi-rust ./filepi || cp target/release/filepi-rust.exe ./filepi.exe 2>/dev/null || true
-        
+        cp target/release/filepi ./filepi || cp target/release/filepi ./filepi 2>/dev/null || true
+
         print_success "Rust application build completed (release)"
-        echo "Output: ./target/release/filepi-rust or ./filepi"
+        echo "Output: ./target/release/filepi or ./filepi"
     else
         print_step "Building in debug mode..."
         cargo build
-        
+
         # Copy binary to root for easier access
-        cp target/debug/filepi-rust ./filepi || cp target/debug/filepi-rust.exe ./filepi.exe 2>/dev/null || true
-        
+        cp target/debug/filepi ./filepi || cp target/debug/filepi ./filepi 2>/dev/null || true
+
         print_success "Rust application build completed (debug)"
-        echo "Output: ./target/debug/filepi-rust or ./filepi"
+        echo "Output: ./target/debug/filepi or ./filepi"
     fi
 }
 
 # Function to create Debian package
 build_deb() {
     print_step "Creating Debian package..."
-    
+
     # Check prerequisites
-    if [ ! -f "filepi" ] && [ ! -f "target/release/filepi-rust" ]; then
+    if [ ! -f "filepi" ] && [ ! -f "target/release/filepi" ]; then
         print_error "filepi binary not found. Run with --type rust first."
         return 1
     fi
-    
+
     if [ ! -d "webdeploy" ] || [ ! -f "webdeploy/index.html" ]; then
         print_error "webdeploy directory not found or incomplete. Run with --type blazor first."
         return 1
     fi
-    
+
     # Run the Debian package build
     ./build-deb.sh "$PKG_VERSION" "$PKG_ARCH"
-    
+
     print_success "Debian package build completed"
     echo "Output: outputs/filepi_${PKG_VERSION}_${PKG_ARCH}.deb"
 }
@@ -198,9 +198,9 @@ case $BUILD_TYPE in
     "rust")
         build_rust
         ;;
-    # "deb")
-    #     build_deb
-    #     ;;
+    "deb")
+        build_deb
+        ;;
     "all")
         build_blazor
         build_rust
@@ -219,11 +219,11 @@ echo "📁 Generated files:"
 if [ -f "filepi" ]; then
     echo "  - Rust executable: ./filepi"
 fi
-if [ -f "target/release/filepi-rust" ]; then
-    echo "  - Rust executable: ./target/release/filepi-rust"
+if [ -f "target/release/filepi" ]; then
+    echo "  - Rust executable: ./target/release/filepi"
 fi
-if [ -f "target/debug/filepi-rust" ]; then
-    echo "  - Rust executable: ./target/debug/filepi-rust"
+if [ -f "target/debug/filepi" ]; then
+    echo "  - Rust executable: ./target/debug/filepi"
 fi
 if [ -d "webdeploy" ]; then
     echo "  - Blazor UI: ./webdeploy/"
