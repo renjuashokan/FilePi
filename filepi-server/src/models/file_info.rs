@@ -19,11 +19,14 @@ pub struct FileInfo {
 }
 
 impl FileInfo {
-    pub fn from_path<P: AsRef<Path>, T: AsRef<Path>>(
+    pub fn from_path<P: AsRef<Path>, C: AsRef<Path>, R: AsRef<Path>>(
         absolute_path: P,
-        current_dir: T,
+        current_dir: C,
+        root_dir: R,
     ) -> std::io::Result<Self> {
         let path = absolute_path.as_ref();
+        let current = current_dir.as_ref();
+        let root = root_dir.as_ref();
         let metadata = fs::metadata(path)?;
 
         // Basic info
@@ -32,7 +35,12 @@ impl FileInfo {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
 
-        let full_name = String::from(path.to_str().unwrap());
+        // full_name should be relative to current_dir (without leading /)
+        let full_name = path
+            .strip_prefix(current)
+            .ok()
+            .map(|rel| rel.to_string_lossy().to_string())
+            .unwrap_or_else(|| String::from(path.to_str().unwrap()));
 
         let size = match get_size(path) {
             Ok(size) => size,
@@ -49,7 +57,17 @@ impl FileInfo {
             .created()
             .ok()
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_millis());
+            .map(|d| d.as_millis())
+            .or_else(|| {
+                // Fallback to ctime on Unix systems
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    Some(metadata.ctime() as u128 * 1000)
+                }
+                #[cfg(not(unix))]
+                None
+            });
 
         let modified_time = metadata
             .modified()
@@ -62,12 +80,15 @@ impl FileInfo {
         // Owner info (Unix/Linux only)
         let owner = get_file_owner(path);
 
-        // Parent directory
-        let parent_dir = path.parent().map(|p| p.to_string_lossy().to_string());
+        // Parent directory is current_dir (relative to root_dir without leading /)
+        let parent_dir = current
+            .strip_prefix(root)
+            .ok()
+            .map(|rel| rel.to_string_lossy().to_string());
 
-        // Relative path from current directory
+        // Relative path from root_dir to file (without leading /)
         let rel_path = path
-            .strip_prefix(&current_dir)
+            .strip_prefix(root)
             .ok()
             .map(|rel| rel.to_string_lossy().to_string());
 
