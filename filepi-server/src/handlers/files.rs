@@ -101,10 +101,12 @@ pub async fn get_files(
         let entry_path = entry.path();
 
         // Create FileInfo with absolute path and current directory context
-        files.push(FileInfo::from_path(&entry_path, &full_path).map_err(|e| {
-            error!("Error creating FileInfo: {}", e);
-            AppError::InternalError(format!("Failed to read file info: {}", e))
-        })?);
+        files.push(
+            FileInfo::from_path(&entry_path, &full_path, &config.root_dir).map_err(|e| {
+                error!("Error creating FileInfo: {}", e);
+                AppError::InternalError(format!("Failed to read file info: {}", e))
+            })?,
+        );
     }
 
     result_handler::format_result(&mut files, &params)
@@ -194,7 +196,12 @@ pub async fn get_videos(
             continue;
         }
 
-        video_files.push(FileInfo::from_path(&file_path, &full_path).unwrap());
+        video_files.push(
+            FileInfo::from_path(&file_path, &full_path, &config.root_dir).map_err(|e| {
+                error!("Error creating FileInfo: {}", e);
+                AppError::InternalError(format!("Failed to read file info: {}", e))
+            })?,
+        );
     }
 
     result_handler::format_result(&mut video_files, &params)
@@ -282,7 +289,12 @@ pub async fn search(
             continue;
         }
 
-        matching_files.push(FileInfo::from_path(&file_path, &path).unwrap());
+        matching_files.push(
+            FileInfo::from_path(&file_path, &full_path, &config.root_dir).map_err(|e| {
+                error!("Error creating FileInfo: {}", e);
+                AppError::InternalError(format!("Failed to read file info: {}", e))
+            })?,
+        );
     }
 
     result_handler::format_result(&mut matching_files, &params)
