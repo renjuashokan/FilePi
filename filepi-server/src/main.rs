@@ -5,6 +5,7 @@ mod models;
 
 use axum::{
     Router,
+    extract::DefaultBodyLimit,
     http::StatusCode,
     middleware as axum_middleware,
     response::IntoResponse,
@@ -68,7 +69,9 @@ async fn main() {
         .route("/stream/{*wildcard}", get(files::stream_file))
         .route("/thumbnail/{*wildcard}", get(files::get_thumbnail))
         .route("/createfolder", post(files::create_folder))
+        // Disable body limit for streaming upload - we handle chunks directly
         .route("/uploadfile", post(files::upload_file))
+        .layer(DefaultBodyLimit::disable())
         .route(
             "/syncfusion/fileoperations",
             post(handlers::syncfusion::file_operations),
