@@ -13,6 +13,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::File;
+use tokio::io::AsyncReadExt;
 use tokio_util::io::ReaderStream;
 use tracing::{error, info};
 use walkdir::WalkDir;
@@ -368,10 +369,11 @@ pub async fn serve_file(
     ))
 }
 
-// Stream file (for video streaming)
+// Stream file (for video streaming with Range request support)
 pub async fn stream_file(
     State(config): State<Arc<Config>>,
     Path(file_path): Path<String>,
+    headers: axum::http::HeaderMap,
 ) -> Result<impl IntoResponse, AppError> {
     let file_path = file_path.trim_start_matches('/');
     let abs_path = PathBuf::from(&config.root_dir).join(file_path);
@@ -393,7 +395,7 @@ pub async fn stream_file(
     info!("Streaming file: {:?}", abs_path);
 
     // Open the file
-    let file = File::open(&abs_path).await.map_err(|e| {
+    let mut file = File::open(&abs_path).await.map_err(|e| {
         error!("Failed to open file: {}", e);
         AppError::InternalError(format!("Failed to open file: {}", e))
     })?;
@@ -404,10 +406,62 @@ pub async fn stream_file(
         AppError::InternalError(format!("Failed to read metadata: {}", e))
     })?;
 
+    let file_size = metadata.len();
+
     // Guess MIME type from file extension
     let mime_type = from_path(&abs_path).first_or_octet_stream().to_string();
 
-    // Create a stream from the file
+    // Parse Range header if present
+    let range_header = headers.get(header::RANGE);
+
+    if let Some(range_value) = range_header {
+        // Parse the Range header (format: "bytes=start-end")
+        let range_str = range_value.to_str().unwrap_or("");
+
+        if let Some(byte_range) = parse_range_header(range_str, file_size) {
+            let (start, end) = byte_range;
+            let content_length = end - start + 1;
+
+            info!(
+                "Range request: bytes {}-{}/{} (length: {})",
+                start, end, file_size, content_length
+            );
+
+            // Seek to the start position
+            use tokio::io::AsyncSeekExt;
+            file.seek(std::io::SeekFrom::Start(start))
+                .await
+                .map_err(|e| {
+                    error!("Failed to seek file: {}", e);
+                    AppError::InternalError(format!("Failed to seek file: {}", e))
+                })?;
+
+            // Create a limited stream that only reads the requested range
+            let limited_file = file.take(content_length);
+            let stream = ReaderStream::new(limited_file);
+            let body = Body::from_stream(stream);
+
+            // Return 206 Partial Content with Content-Range header
+            return Ok((
+                StatusCode::PARTIAL_CONTENT,
+                [
+                    (header::CONTENT_TYPE, mime_type),
+                    (header::CONTENT_LENGTH, content_length.to_string()),
+                    (
+                        header::CONTENT_RANGE,
+                        format!("bytes {}-{}/{}", start, end, file_size),
+                    ),
+                    (header::ACCEPT_RANGES, "bytes".to_string()),
+                    (header::CACHE_CONTROL, "no-cache".to_string()),
+                ],
+                body,
+            ));
+        }
+    }
+
+    // No range header or invalid range - return full file
+    info!("Full file request: {} bytes", file_size);
+
     let stream = ReaderStream::new(file);
     let body = Body::from_stream(stream);
 
@@ -416,12 +470,53 @@ pub async fn stream_file(
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, mime_type),
-            (header::CONTENT_LENGTH, metadata.len().to_string()),
+            (header::CONTENT_LENGTH, file_size.to_string()),
             (header::ACCEPT_RANGES, "bytes".to_string()),
             (header::CACHE_CONTROL, "no-cache".to_string()),
+            (header::CONTENT_DISPOSITION, "inline".to_string()),
         ],
         body,
     ))
+}
+
+// Helper function to parse Range header
+// Returns (start, end) inclusive byte positions
+fn parse_range_header(range_str: &str, file_size: u64) -> Option<(u64, u64)> {
+    // Expected format: "bytes=start-end" or "bytes=start-" or "bytes=-suffix"
+    let range_str = range_str.trim();
+
+    if !range_str.starts_with("bytes=") {
+        return None;
+    }
+
+    let range_part = &range_str[6..]; // Skip "bytes="
+
+    if let Some((start_str, end_str)) = range_part.split_once('-') {
+        if start_str.is_empty() {
+            // Suffix range: "-500" means last 500 bytes
+            if let Ok(suffix) = end_str.parse::<u64>() {
+                let start = file_size.saturating_sub(suffix);
+                return Some((start, file_size - 1));
+            }
+        } else if end_str.is_empty() {
+            // Open-ended range: "500-" means from byte 500 to end
+            if let Ok(start) = start_str.parse::<u64>() {
+                if start < file_size {
+                    return Some((start, file_size - 1));
+                }
+            }
+        } else {
+            // Full range: "500-999"
+            if let (Ok(start), Ok(end)) = (start_str.parse::<u64>(), end_str.parse::<u64>()) {
+                if start < file_size {
+                    let end = end.min(file_size - 1);
+                    return Some((start, end));
+                }
+            }
+        }
+    }
+
+    None
 }
 
 pub async fn get_thumbnail(
