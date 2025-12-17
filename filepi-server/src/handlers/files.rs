@@ -490,7 +490,17 @@ fn parse_range_header(range_str: &str, file_size: u64) -> Option<(u64, u64)> {
     if let Some((start_str, end_str)) = range_part.split_once('-') {
         if start_str.is_empty() {
             // Suffix range: "-500" means last 500 bytes
+            // Guard against empty files or zero-length suffixes
+            if file_size == 0 {
+                return None;
+            }
+
             if let Ok(suffix) = end_str.parse::<u64>() {
+                // Guard against zero-length suffix
+                if suffix == 0 {
+                    return None;
+                }
+
                 let start = file_size.saturating_sub(suffix);
                 return Some((start, file_size - 1));
             }
