@@ -46,5 +46,7 @@ pub struct UploadResponse {
     pub uploaded_by: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sha512: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sha1: Option<String>,
     pub skipped: bool,
 }

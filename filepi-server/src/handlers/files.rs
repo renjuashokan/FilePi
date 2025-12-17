@@ -17,7 +17,7 @@ use tracing::{debug, error, info};
 use walkdir::WalkDir;
 
 use crate::config::Config;
-use crate::handlers::hash_utilities::compute_file_sha512;
+use crate::handlers::hash_utilities::{compute_file_sha1_streaming, compute_file_sha512_streaming};
 use crate::handlers::thumbnail_manager::ThumbnailError;
 use crate::handlers::{app_error::AppError, result_handler};
 use crate::models::file_info::FileInfo;
@@ -654,6 +654,7 @@ pub async fn upload_file(
     let mut location = String::new();
     let mut user = String::new();
     let mut client_sha512: Option<String> = None;
+    let mut client_sha1: Option<String> = None;
     let mut filename = String::from("unnamed");
     let mut file_path: Option<PathBuf> = None;
     let mut total_bytes = 0u64;
@@ -701,6 +702,21 @@ pub async fn upload_file(
                         .to_lowercase(),
                 );
                 debug!("✓ Client provided SHA-512 hash");
+            }
+            "sha1" => {
+                debug!("Reading 'sha1' field...");
+                client_sha1 = Some(
+                    field
+                        .text()
+                        .await
+                        .map_err(|e| {
+                            error!("Failed to read sha1 field: {}", e);
+                            AppError::BadRequest("Invalid sha1 field".to_string())
+                        })?
+                        .trim()
+                        .to_lowercase(),
+                );
+                debug!("✓ Client provided SHA-1 hash");
             }
             "file" => {
                 debug!("Processing 'file' field...");
@@ -776,17 +792,24 @@ pub async fn upload_file(
                 let target_path = upload_dir.join(&filename);
                 debug!("Target file path: {:?}", target_path);
 
-                // Check if file already exists and SHA-512 hash is provided
+                // Check if file already exists and hash is provided for deduplication
                 if target_path.exists() {
                     debug!("File already exists at target path");
+
+                    // Try SHA-512 first (more secure)
                     if let Some(ref client_hash) = client_sha512 {
                         info!("Checking SHA-512 hash for deduplication...");
 
-                        // Compute SHA-512 hash of existing file
-                        let existing_hash = compute_file_sha512(&target_path).map_err(|e| {
-                            error!("Failed to compute SHA-512 hash of existing file: {}", e);
-                            AppError::InternalError(format!("Failed to compute file hash: {}", e))
-                        })?;
+                        // Compute SHA-512 hash of existing file using async streaming
+                        let existing_hash = compute_file_sha512_streaming(&target_path)
+                            .await
+                            .map_err(|e| {
+                                error!("Failed to compute SHA-512 hash of existing file: {}", e);
+                                AppError::InternalError(format!(
+                                    "Failed to compute file hash: {}",
+                                    e
+                                ))
+                            })?;
 
                         info!(
                             "Client SHA-512: {}..., Existing file SHA-512: {}...",
@@ -813,12 +836,57 @@ pub async fn upload_file(
                                 uploaded_by: user,
                                 skipped: true,
                                 sha512: Some(existing_hash),
+                                sha1: None,
                             }));
                         } else {
                             info!("SHA-512 mismatch - file will be replaced");
                         }
+                    } else if let Some(ref client_hash) = client_sha1 {
+                        info!("Checking SHA-1 hash for deduplication...");
+
+                        // Compute SHA-1 hash of existing file using async streaming
+                        let existing_hash = compute_file_sha1_streaming(&target_path)
+                            .await
+                            .map_err(|e| {
+                                error!("Failed to compute SHA-1 hash of existing file: {}", e);
+                                AppError::InternalError(format!(
+                                    "Failed to compute file hash: {}",
+                                    e
+                                ))
+                            })?;
+
+                        info!(
+                            "Client SHA-1: {}..., Existing file SHA-1: {}...",
+                            &client_hash[..16.min(client_hash.len())],
+                            &existing_hash[..16]
+                        );
+
+                        // If hashes match, skip upload
+                        if client_hash == &existing_hash {
+                            info!("✓ SHA-1 match - skipping upload for file: {}", filename);
+
+                            let relative_path = target_path
+                                .strip_prefix(&canonical_root)
+                                .unwrap_or(&target_path)
+                                .to_string_lossy()
+                                .to_string();
+
+                            return Ok(Json(crate::models::UploadResponse {
+                                message:
+                                    "File already exists with identical content, upload skipped"
+                                        .to_string(),
+                                filename,
+                                location: relative_path,
+                                uploaded_by: user,
+                                skipped: true,
+                                sha512: None,
+                                sha1: Some(existing_hash),
+                            }));
+                        } else {
+                            info!("SHA-1 mismatch - file will be replaced");
+                        }
                     } else {
-                        info!("No SHA-512 provided - file will be replaced");
+                        info!("No hash provided - file will be replaced");
                     }
                 } else {
                     debug!("File does not exist, will create new file");
@@ -936,5 +1004,6 @@ pub async fn upload_file(
         uploaded_by: user,
         skipped: false,
         sha512: None,
+        sha1: None,
     }))
 }
