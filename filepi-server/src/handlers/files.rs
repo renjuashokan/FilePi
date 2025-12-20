@@ -6,25 +6,22 @@ use axum::{
     response::IntoResponse,
 };
 
-use axum_typed_multipart::TypedMultipart;
 use mime_guess::from_path;
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::File;
+use tokio::io::AsyncReadExt;
 use tokio_util::io::ReaderStream;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use walkdir::WalkDir;
 
 use crate::config::Config;
-use crate::handlers::hash_utilities::compute_file_sha512;
+use crate::handlers::hash_utilities::{compute_file_sha1_streaming, compute_file_sha512_streaming};
 use crate::handlers::thumbnail_manager::ThumbnailError;
 use crate::handlers::{app_error::AppError, result_handler};
 use crate::models::file_info::FileInfo;
-use crate::models::{
-    CreateFolderRequest, CreateFolderResponse, FileQuery, FilesResponse, UploadForm,
-};
+use crate::models::{CreateFolderRequest, CreateFolderResponse, FileQuery, FilesResponse};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -368,10 +365,11 @@ pub async fn serve_file(
     ))
 }
 
-// Stream file (for video streaming)
+// Stream file (for video streaming with Range request support)
 pub async fn stream_file(
     State(config): State<Arc<Config>>,
     Path(file_path): Path<String>,
+    headers: axum::http::HeaderMap,
 ) -> Result<impl IntoResponse, AppError> {
     let file_path = file_path.trim_start_matches('/');
     let abs_path = PathBuf::from(&config.root_dir).join(file_path);
@@ -393,7 +391,7 @@ pub async fn stream_file(
     info!("Streaming file: {:?}", abs_path);
 
     // Open the file
-    let file = File::open(&abs_path).await.map_err(|e| {
+    let mut file = File::open(&abs_path).await.map_err(|e| {
         error!("Failed to open file: {}", e);
         AppError::InternalError(format!("Failed to open file: {}", e))
     })?;
@@ -404,10 +402,62 @@ pub async fn stream_file(
         AppError::InternalError(format!("Failed to read metadata: {}", e))
     })?;
 
+    let file_size = metadata.len();
+
     // Guess MIME type from file extension
     let mime_type = from_path(&abs_path).first_or_octet_stream().to_string();
 
-    // Create a stream from the file
+    // Parse Range header if present
+    let range_header = headers.get(header::RANGE);
+
+    if let Some(range_value) = range_header {
+        // Parse the Range header (format: "bytes=start-end")
+        let range_str = range_value.to_str().unwrap_or("");
+
+        if let Some(byte_range) = parse_range_header(range_str, file_size) {
+            let (start, end) = byte_range;
+            let content_length = end - start + 1;
+
+            info!(
+                "Range request: bytes {}-{}/{} (length: {})",
+                start, end, file_size, content_length
+            );
+
+            // Seek to the start position
+            use tokio::io::AsyncSeekExt;
+            file.seek(std::io::SeekFrom::Start(start))
+                .await
+                .map_err(|e| {
+                    error!("Failed to seek file: {}", e);
+                    AppError::InternalError(format!("Failed to seek file: {}", e))
+                })?;
+
+            // Create a limited stream that only reads the requested range
+            let limited_file = file.take(content_length);
+            let stream = ReaderStream::new(limited_file);
+            let body = Body::from_stream(stream);
+
+            // Return 206 Partial Content with Content-Range header
+            return Ok((
+                StatusCode::PARTIAL_CONTENT,
+                [
+                    (header::CONTENT_TYPE, mime_type),
+                    (header::CONTENT_LENGTH, content_length.to_string()),
+                    (
+                        header::CONTENT_RANGE,
+                        format!("bytes {}-{}/{}", start, end, file_size),
+                    ),
+                    (header::ACCEPT_RANGES, "bytes".to_string()),
+                    (header::CACHE_CONTROL, "no-cache".to_string()),
+                ],
+                body,
+            ));
+        }
+    }
+
+    // No range header or invalid range - return full file
+    info!("Full file request: {} bytes", file_size);
+
     let stream = ReaderStream::new(file);
     let body = Body::from_stream(stream);
 
@@ -416,12 +466,63 @@ pub async fn stream_file(
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, mime_type),
-            (header::CONTENT_LENGTH, metadata.len().to_string()),
+            (header::CONTENT_LENGTH, file_size.to_string()),
             (header::ACCEPT_RANGES, "bytes".to_string()),
             (header::CACHE_CONTROL, "no-cache".to_string()),
+            (header::CONTENT_DISPOSITION, "inline".to_string()),
         ],
         body,
     ))
+}
+
+// Helper function to parse Range header
+// Returns (start, end) inclusive byte positions
+fn parse_range_header(range_str: &str, file_size: u64) -> Option<(u64, u64)> {
+    // Expected format: "bytes=start-end" or "bytes=start-" or "bytes=-suffix"
+    let range_str = range_str.trim();
+
+    if !range_str.starts_with("bytes=") {
+        return None;
+    }
+
+    let range_part = &range_str[6..]; // Skip "bytes="
+
+    if let Some((start_str, end_str)) = range_part.split_once('-') {
+        if start_str.is_empty() {
+            // Suffix range: "-500" means last 500 bytes
+            // Guard against empty files or zero-length suffixes
+            if file_size == 0 {
+                return None;
+            }
+
+            if let Ok(suffix) = end_str.parse::<u64>() {
+                // Guard against zero-length suffix
+                if suffix == 0 {
+                    return None;
+                }
+
+                let start = file_size.saturating_sub(suffix);
+                return Some((start, file_size - 1));
+            }
+        } else if end_str.is_empty() {
+            // Open-ended range: "500-" means from byte 500 to end
+            if let Ok(start) = start_str.parse::<u64>() {
+                if start < file_size {
+                    return Some((start, file_size - 1));
+                }
+            }
+        } else {
+            // Full range: "500-999"
+            if let (Ok(start), Ok(end)) = (start_str.parse::<u64>(), end_str.parse::<u64>()) {
+                if start <= end && start < file_size {
+                    let end = end.min(file_size - 1);
+                    return Some((start, end));
+                }
+            }
+        }
+    }
+
+    None
 }
 
 pub async fn get_thumbnail(
@@ -475,31 +576,43 @@ pub async fn get_thumbnail(
 
 pub async fn create_folder(
     State(config): State<Arc<Config>>,
-    Json(params): Json<CreateFolderRequest>,
+    Query(params): Query<CreateFolderRequest>,
 ) -> Result<Json<CreateFolderResponse>, AppError> {
+    info!("=== Create folder request received ===");
+
     let path = params.path.as_deref().unwrap_or_default();
     let folder_name = params.foldername.as_deref().unwrap_or_default();
 
+    info!(
+        "Create folder - path: '{}', folder_name: '{}'",
+        path, folder_name
+    );
+
     if folder_name.is_empty() {
+        error!("Folder name is empty");
         return Err(AppError::NotFound(format!(
             "Folder name should not be empty"
         )));
     }
+    debug!("✓ Folder name validated");
 
     // Construct the full path
     let full_path = PathBuf::from(&config.root_dir).join(&path);
+    debug!("Full path constructed: {:?}", full_path);
 
     // Validate the path exists
     if !full_path.exists() {
         error!("Path not found: {:?}", full_path);
         return Err(AppError::NotFound(format!("Path not found: {}", path)));
     }
+    debug!("✓ Path exists");
 
     // Canonicalize to resolve . and .. and get the clean absolute path
     let full_path = full_path.canonicalize().map_err(|e| {
         error!("Failed to canonicalize path {:?}: {}", full_path, e);
         AppError::NotFound(format!("Path not found: {}", path))
     })?;
+    debug!("✓ Canonical path: {:?}", full_path);
 
     // Security: ensure the canonicalized path is still within root_dir
     let canonical_root = PathBuf::from(&config.root_dir)
@@ -510,86 +623,372 @@ pub async fn create_folder(
         })?;
 
     if !full_path.starts_with(&canonical_root) {
+        error!(
+            "Security violation: path {:?} is outside root {:?}",
+            full_path, canonical_root
+        );
         return Err(AppError::BadRequest(
             "Invalid path: outside root directory".to_string(),
         ));
     }
+    debug!("✓ Security check passed");
 
     let dir_path = PathBuf::from(&full_path).join(&folder_name);
+    debug!("Target directory path: {:?}", dir_path);
 
     if dir_path.exists() {
+        error!("Directory already exists: {:?}", dir_path);
         return Err(AppError::BadRequest("Directory already exist".to_string()));
     }
+    debug!("✓ Directory does not exist, creating...");
 
-    let _res = fs::create_dir_all(dir_path).map_err(|e| {
+    let _res = fs::create_dir_all(&dir_path).map_err(|e| {
         error!("Error creating directory: {}", e);
         AppError::InternalError(format!("Failed to create directory: {}", e))
     })?;
+
+    info!("✓✓✓ Folder created successfully: {:?}", dir_path);
 
     Ok(Json(CreateFolderResponse {
         message: String::from("Folder created successfully"),
     }))
 }
 
+// Streaming upload handler - processes file chunks without loading entire file into memory
 pub async fn upload_file(
     State(config): State<Arc<Config>>,
-    TypedMultipart(form): TypedMultipart<UploadForm>,
+    mut multipart: axum::extract::Multipart,
 ) -> Result<Json<crate::models::UploadResponse>, AppError> {
-    info!("Starting file upload process");
+    info!("=== Starting streaming file upload process ===");
 
-    let location = form.location.trim();
-    let user = form.user.trim();
-    let client_sha512 = form.sha512.as_ref().map(|h| h.trim().to_lowercase());
+    let mut location = String::new();
+    let mut user = String::new();
+    let mut client_sha512: Option<String> = None;
+    let mut client_sha1: Option<String> = None;
+    let mut filename = String::from("unnamed");
+    let mut file_path: Option<PathBuf> = None;
+    let mut total_bytes = 0u64;
+    let mut field_count = 0;
 
-    info!(
-        "Upload parameters - location: {}, user: {}, sha512: {:?}",
-        location,
-        user,
-        client_sha512.as_ref().map(|h| &h[..16])
-    ); // Log only first 16 chars
+    debug!("Beginning multipart field iteration");
 
-    if location.is_empty() || user.is_empty() {
-        return Err(AppError::BadRequest(
-            "Missing required fields: location or user".to_string(),
-        ));
+    // Process multipart fields
+    while let Some(mut field) = multipart.next_field().await.map_err(|e| {
+        error!("Failed to read multipart field: {}", e);
+        AppError::BadRequest(format!("Invalid multipart data: {}", e))
+    })? {
+        field_count += 1;
+        let field_name = field.name().unwrap_or("").to_string();
+        debug!("Processing field #{}: '{}'", field_count, field_name);
+
+        match field_name.as_str() {
+            "location" => {
+                debug!("Reading 'location' field...");
+                location = field.text().await.map_err(|e| {
+                    error!("Failed to read location field: {}", e);
+                    AppError::BadRequest("Invalid location field".to_string())
+                })?;
+                debug!("✓ Upload location: '{}'", location);
+            }
+            "user" => {
+                debug!("Reading 'user' field...");
+                user = field.text().await.map_err(|e| {
+                    error!("Failed to read user field: {}", e);
+                    AppError::BadRequest("Invalid user field".to_string())
+                })?;
+                debug!("✓ Upload user: '{}'", user);
+            }
+            "sha512" => {
+                debug!("Reading 'sha512' field...");
+                client_sha512 = Some(
+                    field
+                        .text()
+                        .await
+                        .map_err(|e| {
+                            error!("Failed to read sha512 field: {}", e);
+                            AppError::BadRequest("Invalid sha512 field".to_string())
+                        })?
+                        .trim()
+                        .to_lowercase(),
+                );
+                debug!("✓ Client provided SHA-512 hash");
+            }
+            "sha1" => {
+                debug!("Reading 'sha1' field...");
+                client_sha1 = Some(
+                    field
+                        .text()
+                        .await
+                        .map_err(|e| {
+                            error!("Failed to read sha1 field: {}", e);
+                            AppError::BadRequest("Invalid sha1 field".to_string())
+                        })?
+                        .trim()
+                        .to_lowercase(),
+                );
+                debug!("✓ Client provided SHA-1 hash");
+            }
+            "file" => {
+                debug!("Processing 'file' field...");
+
+                // Validate required fields before processing file
+                if location.is_empty() || user.is_empty() {
+                    error!(
+                        "Missing required fields - location: '{}', user: '{}'",
+                        location, user
+                    );
+                    return Err(AppError::BadRequest(
+                        "Missing required fields: location or user must be provided before file"
+                            .to_string(),
+                    ));
+                }
+                debug!("✓ Required fields validated");
+
+                // Get filename from field metadata
+                let raw_filename = field.file_name().unwrap_or("unnamed");
+                debug!("Raw filename from client: '{}'", raw_filename);
+
+                filename = raw_filename.replace(['/', '\\', '\0'], "_");
+                debug!("✓ Sanitized filename: '{}'", filename);
+
+                // Construct the full path for upload location
+                let upload_dir = PathBuf::from(&config.root_dir).join(&location);
+                debug!("Upload directory path: {:?}", upload_dir);
+
+                // Canonicalize and validate the upload directory
+                let upload_dir = if upload_dir.exists() {
+                    debug!("Upload directory exists, canonicalizing...");
+                    upload_dir.canonicalize().map_err(|e| {
+                        error!("Failed to canonicalize upload path: {}", e);
+                        AppError::BadRequest("Invalid upload location".to_string())
+                    })?
+                } else {
+                    debug!("Upload directory doesn't exist, creating...");
+                    fs::create_dir_all(&upload_dir).map_err(|e| {
+                        error!("Failed to create upload directory: {}", e);
+                        AppError::InternalError(format!("Failed to create directory: {}", e))
+                    })?;
+                    debug!("✓ Directory created");
+                    upload_dir.canonicalize().map_err(|e| {
+                        error!("Failed to canonicalize upload path: {}", e);
+                        AppError::BadRequest("Invalid upload location".to_string())
+                    })?
+                };
+                debug!("✓ Canonical upload directory: {:?}", upload_dir);
+
+                // Security: ensure the upload path is within root_dir
+                let canonical_root =
+                    PathBuf::from(&config.root_dir)
+                        .canonicalize()
+                        .map_err(|e| {
+                            error!("Failed to canonicalize root directory: {}", e);
+                            AppError::InternalError(
+                                "Invalid root directory configuration".to_string(),
+                            )
+                        })?;
+
+                if !upload_dir.starts_with(&canonical_root) {
+                    error!(
+                        "Security violation: upload path {:?} is outside root {:?}",
+                        upload_dir, canonical_root
+                    );
+                    return Err(AppError::BadRequest(
+                        "Invalid upload path: outside root directory".to_string(),
+                    ));
+                }
+                debug!("✓ Security check passed");
+
+                // Full path for the file
+                let target_path = upload_dir.join(&filename);
+                debug!("Target file path: {:?}", target_path);
+
+                // Check if file already exists and hash is provided for deduplication
+                if target_path.exists() {
+                    debug!("File already exists at target path");
+
+                    // Try SHA-512 first (more secure)
+                    if let Some(ref client_hash) = client_sha512 {
+                        info!("Checking SHA-512 hash for deduplication...");
+
+                        // Compute SHA-512 hash of existing file using async streaming
+                        let existing_hash = compute_file_sha512_streaming(&target_path)
+                            .await
+                            .map_err(|e| {
+                                error!("Failed to compute SHA-512 hash of existing file: {}", e);
+                                AppError::InternalError(format!(
+                                    "Failed to compute file hash: {}",
+                                    e
+                                ))
+                            })?;
+
+                        info!(
+                            "Client SHA-512: {}..., Existing file SHA-512: {}...",
+                            &client_hash[..16.min(client_hash.len())],
+                            &existing_hash[..16]
+                        );
+
+                        // If hashes match, skip upload
+                        if client_hash == &existing_hash {
+                            info!("✓ SHA-512 match - skipping upload for file: {}", filename);
+
+                            let relative_path = target_path
+                                .strip_prefix(&canonical_root)
+                                .unwrap_or(&target_path)
+                                .to_string_lossy()
+                                .to_string();
+
+                            return Ok(Json(crate::models::UploadResponse {
+                                message:
+                                    "File already exists with identical content, upload skipped"
+                                        .to_string(),
+                                filename,
+                                location: relative_path,
+                                uploaded_by: user,
+                                skipped: true,
+                                sha512: Some(existing_hash),
+                                sha1: None,
+                            }));
+                        } else {
+                            info!("SHA-512 mismatch - file will be replaced");
+                        }
+                    } else if let Some(ref client_hash) = client_sha1 {
+                        info!("Checking SHA-1 hash for deduplication...");
+
+                        // Compute SHA-1 hash of existing file using async streaming
+                        let existing_hash = compute_file_sha1_streaming(&target_path)
+                            .await
+                            .map_err(|e| {
+                                error!("Failed to compute SHA-1 hash of existing file: {}", e);
+                                AppError::InternalError(format!(
+                                    "Failed to compute file hash: {}",
+                                    e
+                                ))
+                            })?;
+
+                        info!(
+                            "Client SHA-1: {}..., Existing file SHA-1: {}...",
+                            &client_hash[..16.min(client_hash.len())],
+                            &existing_hash[..16]
+                        );
+
+                        // If hashes match, skip upload
+                        if client_hash == &existing_hash {
+                            info!("✓ SHA-1 match - skipping upload for file: {}", filename);
+
+                            let relative_path = target_path
+                                .strip_prefix(&canonical_root)
+                                .unwrap_or(&target_path)
+                                .to_string_lossy()
+                                .to_string();
+
+                            return Ok(Json(crate::models::UploadResponse {
+                                message:
+                                    "File already exists with identical content, upload skipped"
+                                        .to_string(),
+                                filename,
+                                location: relative_path,
+                                uploaded_by: user,
+                                skipped: true,
+                                sha512: None,
+                                sha1: Some(existing_hash),
+                            }));
+                        } else {
+                            info!("SHA-1 mismatch - file will be replaced");
+                        }
+                    } else {
+                        info!("No hash provided - file will be replaced");
+                    }
+                } else {
+                    debug!("File does not exist, will create new file");
+                }
+
+                debug!("Creating output file for writing...");
+                // Create file for writing (async)
+                let mut output_file = tokio::fs::File::create(&target_path).await.map_err(|e| {
+                    error!("Failed to create file: {}", e);
+                    AppError::InternalError(format!("Failed to create file: {}", e))
+                })?;
+                debug!("✓ Output file created successfully");
+
+                // Stream chunks directly to file
+                debug!("Starting chunk streaming...");
+                use tokio::io::AsyncWriteExt;
+                let mut chunk_count = 0;
+
+                while let Some(chunk) = field.chunk().await.map_err(|e| {
+                    error!("Failed to read file chunk #{}: {}", chunk_count + 1, e);
+                    AppError::InternalError(format!("Failed to read file chunk: {}", e))
+                })? {
+                    chunk_count += 1;
+                    let chunk_size = chunk.len();
+                    total_bytes += chunk_size as u64;
+
+                    if chunk_count % 100 == 0 {
+                        debug!(
+                            "Processing chunk #{}, size: {} bytes, total: {} bytes",
+                            chunk_count, chunk_size, total_bytes
+                        );
+                    }
+
+                    output_file.write_all(&chunk).await.map_err(|e| {
+                        error!(
+                            "Failed to write chunk #{} ({} bytes): {}",
+                            chunk_count, chunk_size, e
+                        );
+                        AppError::InternalError(format!("Failed to write file chunk: {}", e))
+                    })?;
+                }
+                info!(
+                    "✓ Finished streaming {} chunks, total {} bytes",
+                    chunk_count, total_bytes
+                );
+
+                // Ensure all data is written to disk
+                debug!("Flushing file to disk...");
+                output_file.flush().await.map_err(|e| {
+                    error!("Failed to flush file: {}", e);
+                    AppError::InternalError(format!("Failed to flush file: {}", e))
+                })?;
+                debug!("✓ File flushed successfully");
+
+                file_path = Some(target_path);
+                info!(
+                    "✓✓✓ File streamed successfully: '{}' ({} bytes, {} chunks)",
+                    filename, total_bytes, chunk_count
+                );
+
+                // Break after processing file - it's the last field and stream is consumed
+                debug!("Breaking from field loop after file processing");
+                break;
+            }
+            _ => {
+                // Skip unknown fields
+                debug!("Skipping unknown field: '{}'", field_name);
+            }
+        }
     }
 
-    // Get filename from the uploaded file
-    let filename = form
-        .file
-        .metadata
-        .file_name
-        .clone()
-        .unwrap_or_else(|| "unnamed".to_string());
+    debug!("Finished processing {} multipart fields", field_count);
 
-    info!(
-        "Received file: {} - Size: {}",
-        filename,
-        form.file.contents.len()
-    );
+    // Validate that we received a file
+    let file_path = file_path.ok_or_else(|| {
+        error!(
+            "No file field found in multipart data after processing {} fields",
+            field_count
+        );
+        AppError::BadRequest("No file provided in upload".to_string())
+    })?;
+    debug!("✓ File path validated: {:?}", file_path);
 
-    // Construct the full path for upload location
-    let upload_dir = PathBuf::from(&config.root_dir).join(location);
+    // Compute SHA-512 hash of newly uploaded file
+    // info!("Computing SHA-512 hash of uploaded file...");
+    // let new_file_hash = compute_file_sha512(&file_path).map_err(|e| {
+    //     error!("Failed to compute SHA-512 hash of uploaded file: {}", e);
+    //     AppError::InternalError(format!("Failed to compute file hash: {}", e))
+    // })?;
+    // info!("✓ New file SHA-512: {}...", &new_file_hash[..16]);
 
-    // Canonicalize and validate the upload directory
-    let upload_dir = if upload_dir.exists() {
-        upload_dir.canonicalize().map_err(|e| {
-            error!("Failed to canonicalize upload path: {}", e);
-            AppError::BadRequest("Invalid upload location".to_string())
-        })?
-    } else {
-        // Create the directory if it doesn't exist
-        fs::create_dir_all(&upload_dir).map_err(|e| {
-            error!("Failed to create upload directory: {}", e);
-            AppError::InternalError(format!("Failed to create directory: {}", e))
-        })?;
-        upload_dir.canonicalize().map_err(|e| {
-            error!("Failed to canonicalize upload path: {}", e);
-            AppError::BadRequest("Invalid upload location".to_string())
-        })?
-    };
-
-    // Security: ensure the upload path is within root_dir
+    // Get the relative path from root_dir
     let canonical_root = PathBuf::from(&config.root_dir)
         .canonicalize()
         .map_err(|e| {
@@ -597,98 +996,24 @@ pub async fn upload_file(
             AppError::InternalError("Invalid root directory configuration".to_string())
         })?;
 
-    if !upload_dir.starts_with(&canonical_root) {
-        return Err(AppError::BadRequest(
-            "Invalid upload path: outside root directory".to_string(),
-        ));
-    }
-
-    // Full path for the file
-    let file_path = upload_dir.join(&filename);
-
-    // Check if file already exists and SHA-512 hash is provided
-    if file_path.exists() {
-        if let Some(client_hash) = client_sha512 {
-            info!("File already exists, checking SHA-512 hash for deduplication");
-
-            // Compute SHA-512 hash of existing file
-            let existing_hash = compute_file_sha512(&file_path).map_err(|e| {
-                error!("Failed to compute SHA-512 hash of existing file: {}", e);
-                AppError::InternalError(format!("Failed to compute file hash: {}", e))
-            })?;
-
-            info!(
-                "Client SHA-512: {}..., Existing file SHA-512: {}...",
-                &client_hash[..16],
-                &existing_hash[..16]
-            );
-
-            // If hashes match, skip upload
-            if client_hash == existing_hash {
-                info!("SHA-512 match - skipping upload for file: {}", filename);
-
-                let relative_path = file_path
-                    .strip_prefix(&canonical_root)
-                    .unwrap_or(&file_path)
-                    .to_string_lossy()
-                    .to_string();
-
-                return Ok(Json(crate::models::UploadResponse {
-                    message: "File already exists with identical content, upload skipped"
-                        .to_string(),
-                    filename,
-                    location: relative_path,
-                    uploaded_by: user.to_string(),
-                    skipped: true,
-                    sha512: Some(existing_hash),
-                }));
-            } else {
-                info!("SHA-512 mismatch - file will be replaced");
-            }
-        } else {
-            info!("No SHA-512 provided - file will be replaced");
-        }
-    }
-
-    info!("Saving file to location: {:?}", file_path);
-
-    // Write the file (will overwrite if exists)
-    let mut file = std::fs::File::create(&file_path).map_err(|e| {
-        error!("Failed to create file: {}", e);
-        AppError::InternalError(format!("Failed to create file: {}", e))
-    })?;
-
-    file.write_all(&form.file.contents).map_err(|e| {
-        error!("Failed to write file: {}", e);
-        AppError::InternalError(format!("Failed to write file: {}", e))
-    })?;
-
-    info!(
-        "File uploaded successfully: {} to path: {:?}",
-        filename, file_path
-    );
-
-    // Compute SHA-512 hash of newly uploaded file
-    let new_file_hash = compute_file_sha512(&file_path).map_err(|e| {
-        error!("Failed to compute SHA-512 hash of uploaded file: {}", e);
-        AppError::InternalError(format!("Failed to compute file hash: {}", e))
-    })?;
-
-    info!("New file SHA-512: {}...", &new_file_hash[..16]);
-
-    // Get the relative path from root_dir
     let relative_path = file_path
         .strip_prefix(&canonical_root)
         .unwrap_or(&file_path)
         .to_string_lossy()
         .to_string();
 
+    info!(
+        "=== Upload completed successfully: '{}' at '{}' ===",
+        filename, relative_path
+    );
+
     Ok(Json(crate::models::UploadResponse {
         message: "File uploaded successfully".to_string(),
         filename,
         location: relative_path,
-        uploaded_by: user.to_string(),
+        uploaded_by: user,
         skipped: false,
-        sha512: Some(new_file_hash),
+        sha512: None,
+        sha1: None,
     }))
 }
